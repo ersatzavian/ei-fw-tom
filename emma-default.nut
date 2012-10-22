@@ -1,4 +1,15 @@
-erver.log("Emma Started");
+/*
+ * Emma Default "Firmware"
+ * Emma - 8-digit x 17-segment 2.3" display for Electric Imp
+ * Firmware includes scrolling for longer messages as well as
+ * reading on-board digital Ambient Light Sensor with 20-second resolution
+ * 
+ * T. Buttner
+ * 10/21/2012
+ *
+*/
+
+server.log("Emma Started");
 
 // Serial Interface to AS1110 Driver ICs
 hardware.configure(SPI_257);
