@@ -9,6 +9,14 @@
  *
 */
 
+// Emma Default Firmware - print 8-character string to small digit display
+// Pin 1 = load
+// Pin 2 = oe_l
+// Pin 5 = data
+// Pin 7 = srclk
+// Pin 8 = scl
+// Pin 9 = sda
+
 server.log("Emma Started");
 
 // Serial Interface to AS1110 Driver ICs
@@ -18,9 +26,10 @@ hardware.spi.configure(SIMPLEX_TX | LSB_FIRST | CLOCK_IDLE_LOW, 400);
 // [digit 0 (left)][1][2][3][4][5][6][7 (right)][decimal point word]
 
 // Configure oe_l and load as GPIO
-hardware.pin2.configure(DIGITAL_OUT);
 // pin 2 is pulled up inside the AS1110 driver, nominally disable
-hardware.pin2.write(0);
+// we will use pin 2 (oe_l) for brightness control at 1kHz
+local duty = 1.0;
+hardware.pin2.configure(PWM_OUT, 0.0001, duty);
 hardware.pin1.configure(DIGITAL_OUT);
 // pin 2 is pulled up inside the AS1110 driver, nominally disable
 hardware.pin1.write(0);
@@ -34,7 +43,7 @@ local alsAddr = 0x52;
 local blobLen = 17;
 
 // variable containing displayed string
-local currentString = "I'M AN EMMA";
+local currentString = "HELLO WORLD, I'M EMMA.";
 local needsUpdate = true;
 // flag set when string has more than 8 printable characters
 // this triggers message rotation
@@ -57,11 +66,11 @@ local hexTable=
     ['0']=0x75AE,
     ['1']=0x0102,
     ['2']=0xE427,
-    ['3']=0xA527,
+    ['3']=0x252D,
     ['4']=0x8183,
     ['5']=0xA5A5,
     ['6']=0xE5A5,
-    ['7']=0x102C,
+    ['7']=0x082C,
     ['8']=0xE5A7,
     ['9']=0xA5A7,
     ['A']=0xC1A7,
@@ -103,7 +112,8 @@ local hexTable=
     ['\\']=0x0240,
     ['/']=0x1008,
     ['^']=0x1200,
-    ['_']=0x2400
+    ['_']=0x2400,
+    [',']=0x1000
 }
 
 local function load() {
@@ -121,6 +131,34 @@ local function clear() {
     hardware.spi257.write(outputVal);
     load();
     server.log("Display Cleared");
+}
+
+local function fadeIn() {
+    // fading is done by PWMing on the output enable line (pin 2)
+    if (duty > 0.0) {
+        server.log("fading in");
+        while (duty > 0.0) {
+            hardware.pin2.write(duty);
+            duty = duty - 0.1;
+            imp.sleep(0.05);
+        }
+        hardware.pin2.write(0.0);
+        imp.sleep(1.0);        
+    }
+}
+
+local function fadeOut() {
+    if (duty < 1.0) {
+        server.log("fading out");
+        while (duty < 1.0) {
+            // increasing duty cycle decreases on time (brightness)
+            hardware.pin2.write(duty);
+            duty = duty + 0.1;
+            imp.sleep(0.05);
+        }
+        hardware.pin2.write(1.0);
+        imp.sleep(1.0); 
+    }
 }
 
 local function encodeCharacter(inputChar, outputBlob) {
@@ -204,21 +242,21 @@ function prepString(inputString) {
     if (holdRightCount != 0) {
         needsUpdate = false;
         holdRightCount--;
+        if (holdRightCount == 0) {
+            fadeOut();
+        }
         return "";
     } else {
         needsUpdate = true;
     }
 
-    // count printable characters, handle nonprintables
+    // count printable characters
     while (position < inputLen) {
         if (inputString[position] == '.') {
             position++;
             continue;
         } 
-        // it wasn't a decimal point. Replace NPCs and count.
-        if (!isPrintable(inputString[position])) {
-           inputString[postion] = ' ';
-        }
+        // it wasn't a decimal point. Either Printable or will be replaced with spaces. Count.
         position++;
         printableLen++;
     }
@@ -235,7 +273,7 @@ function prepString(inputString) {
             // loop back to left edge of line if we hit the right edge
             overSizeStringPos = 0;
             // pause before printing the beginning of the string again
-            holdRightCount = 20;
+            holdRightCount = 10;
         } else {
             overSizeStringPos++;
         }
@@ -285,6 +323,7 @@ function setDisplay() {
         // send the blob to the display
         hardware.spi257.write(outputBlob);
         load();
+        fadeIn();
         if (overSizeString) {
             needsUpdate = true;
         } else {
@@ -302,7 +341,7 @@ function setDisplay() {
     startAls();
     
     // schedule next check for .5 seconds from now
-    imp.wakeup(0.2, setDisplay);
+    imp.wakeup(0.4, setDisplay);
 }
 
 class displayInput extends InputPort
@@ -319,6 +358,7 @@ class displayInput extends InputPort
         // set the update flag and wait for display to update
         server.log("Setting needsUpdate flag");
         needsUpdate = true;
+        fadeOut();
         
         // reset other flags that will be determined when prepping string
         overSizeString = false;
