@@ -46,7 +46,6 @@ function setDuty() {
     hardware.pin8.write(bluDuty2);
     hardware.pin9.write(bluDuty1);
     
-    //imp.wakeup(0.25, setDuty);
 }
 
 class rgbInput1 extends InputPort

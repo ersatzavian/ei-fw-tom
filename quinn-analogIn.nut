@@ -28,6 +28,9 @@ local redDuty2 = 256.0;
 local bluDuty2 = 256.0;
 local grnDuty2 = 256.0;
 
+// variable to hold light state (on/off)
+local lightOn = true;
+
 // Configure hardware
 hardware.pin1.configure(PWM_OUT, 1.0/pwm_f, redDuty1, 256);
 hardware.pin2.configure(PWM_OUT, 1.0/pwm_f, grnDuty1, 256);
@@ -39,14 +42,20 @@ hardware.pin9.configure(PWM_OUT, 1.0/pwm_f, bluDuty1, 256);
 server.log("Hardware Configured");
 
 function setDuty() {
+    if (!lightOn) {
+        redDuty1 = 0.0;
+        redDuty2 = 0.0;
+        grnDuty1 = 0.0;
+        grnDuty2 = 0.0;
+        bluDuty1 = 0.0;
+        bluDuty2 = 0.0;
+    }
     hardware.pin1.write(redDuty1);
     hardware.pin7.write(redDuty2);
     hardware.pin2.write(grnDuty1);
     hardware.pin5.write(grnDuty2);
     hardware.pin8.write(bluDuty2);
     hardware.pin9.write(bluDuty1);
-    
-    imp.wakeup(0.25, setDuty);
 }
 
 class rgbInput1 extends InputPort
@@ -78,6 +87,7 @@ class rgbInput1 extends InputPort
         }
         server.log(format("Blue 1 set to %.2f,", bluDuty1));
         
+        setDuty();
     }
 }
 
@@ -110,11 +120,27 @@ class rgbInput2 extends InputPort
         }
         server.log(format("Blue 2 set to %.2f,", bluDuty2));
         
+        setDuty();
+    }
+}
+
+class switchInput extends InputPort
+{
+    name = "Switch Input"
+    type = "On/Off"
+    
+    function set(value) {
+        if (value == 0) {
+            lightOn = false;
+        } else {
+            lightOn = true;
+        }
+        setDuty();
     }
 }
 
 server.log("Quinn Started");
-imp.configure("Quinn", [ rgbInput1(), rgbInput2() ], []);
-
+imp.configure("Quinn", [ rgbInput1(), rgbInput2(), switchInput() ], []);
 setDuty();
+
 //EOF

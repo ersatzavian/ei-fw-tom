@@ -24,29 +24,33 @@ local out_pot = OutputPort("potentiometer");
 local out_switch = OutputPort("switch");
 
 local lastRawValue = 0;
+local lastSwitchState = 0;
 
 function checkInput() {
-    local rawValue = hardware.pin8.read();
     
+    local rawValue = hardware.pin8.read();
     // only update with the server if the current reading is markedly different from the last
     // cuts down on traffic and refresh rate, improves response time because we can use smaller delay in imp.wakeup
-    if (math.abs(rawValue - lastRawValue) > 140) {
+    if (math.abs(rawValue - lastRawValue) > 130) {
         local potValue = (hardware.pin8.read()) / 65535.0;
         // note that we divide by 65535.0 to get a value between 0.0 and 1.0
+        server.show(potValue);
         out_pot.set(potValue);
-        lastRawValue = rawValue;
+        lastRawValue = rawValue; 
+    }
     
-        local switchState = hardware.pin7.read();
+    local switchState = hardware.pin7.read();
+    if (switchState != lastSwitchState) {
+        lastSwitchState = switchState;
         if (switchState == 0) {
-            server.show(potValue);
             out_switch.set(1);
         } else {
             server.show("Off");
             out_switch.set(0);
-        }    
+        }        
     }
     
-    imp.wakeup(0.01, checkInput);
+    imp.wakeup(0.03, checkInput);
 }
 
 server.log("April Control Center Started");
