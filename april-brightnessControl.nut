@@ -29,21 +29,30 @@ local voltage = hardware.voltage();
 server.log(format("Running at %.2f V", voltage));
 // we don't need to measure this because we've hooked the potentiometer up to the imp supply voltage
 
+// We use this variable to create a "dead band" around the current value on the potentiometer
+// this can be used to decrease the rate at which we push data to planner by discarding values that
+// are the same as the last one
+local lastRawValue = 0;
+
 server.log("Hardware Configured");
 
 // create an output port to output the signal from our pushbutton switch
 local out_pot = OutputPort("potentiometer");
 
 function checkPot() {
-    local potValue = (hardware.pin8.read()) / 65535.0;
-    // note that we divide by 65535.0 to get a value between 0.0 and 1.0
-    server.show(potValue);
-    out_pot.set(potValue);
+    local rawValue = hardware.pin8.read();
+    if (math.abs(rawValue - lastRawValue) > 150) {
+        local potValue = rawValue / 65535.0;
+        lastRawValue = rawValue;
+        // note that we divide by 65535.0 to get a value between 0.0 and 1.0
+        server.show(potValue);
+        out_pot.set(potValue);
+    }
     
     // schedule us to wake up and run this function again.
     // first parameter: time in seconds til next wakeup. Use a floating-point number (i.e. "1.0")
     // second parameter: name of the function to run when we wake back up
-    imp.wakeup(0.5, checkPot);
+    imp.wakeup(0.01, checkPot);
 }
 
 class ledBrightness extends InputPort
