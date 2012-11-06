@@ -24,7 +24,7 @@ local out_pot = OutputPort("potentiometer");
 local out_switch = OutputPort("switch");
 
 local lastRawValue = 0;
-local lastSwitchState = 0;
+local lastSwitchState = 2;
 
 function checkInput() {
     
@@ -50,7 +50,7 @@ function checkInput() {
         }        
     }
     
-    imp.wakeup(0.03, checkInput);
+    imp.wakeup(0.05, checkInput);
 }
 
 server.log("April Control Center Started");
