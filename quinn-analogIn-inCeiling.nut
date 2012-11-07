@@ -1,4 +1,4 @@
-// 6-channel 5A PWM Driver (Float 0.0 to 1.0 In)
+// 6-channel 5A PWM Driver (Float 0.0 to 1.0 In) with Paired Channels
  
 /* Pin Assignments according to silkscreen
  * Pin 1 = Red 1
@@ -7,14 +7,6 @@
  * Pin 7 = Red 2
  * Pin 8 = Green 2
  * Pin 9 = Green 1 
- */
- 
-/* Note: Green and Blue are switched on the LED strips we purchased
- * blue and green have therefore been switched below:
- * Pin 2 = Green 1
- * Pin 5 = Green 2
- * Pin 8 = Blue 1
- * Pin 9 = Blue 2
  */
 
 // initialize some handy values
@@ -33,17 +25,8 @@ server.log("Hardware Configured");
 
 class rgbInput extends InputPort
 {
+    name = "Analog Input"
     type = "float"
-    redPin = null
-    grnPin = null
-    bluPin = null
-    
-    constructor(name, redPin, grnPin, bluPin) {
-        base.constructor(name)
-        this.redPin = redPin
-        this.grnPin = grnPin
-        this.bluPin = bluPin
-    }
     
     function set(value) {
         // fully counterclockwise = red
@@ -71,10 +54,13 @@ class rgbInput extends InputPort
         }
         server.log(format("%s Blue set to %.2f,", name, blue));
         
-        // now write the values out to the pins
-        this.redPin.write(red);
-        this.grnPin.write(green);
-        this.bluPin.write(blue);
+        // now write values to pins
+        hardware.pin1.write(red);
+        hardware.pin7.write(red);
+        hardware.pin9.write(green);
+        hardware.pin8.write(green);
+        hardware.pin2.write(blue);
+        hardware.pin5.write(blue);
     }
 }
 
@@ -96,8 +82,6 @@ class switchInput extends InputPort
 }
 
 server.log("Quinn Started");
-local ch1 = rgbInput("Channel 1", hardware.pin1, hardware.pin2, hardware.pin9);
-local ch2 = rgbInput("Channel 2", hardware.pin7, hardware.pin5, hardware.pin8);
-imp.configure("Quinn", [ch1, ch2, switchInput() ], []);
+imp.configure("Quinn", [rgbInput(), switchInput() ], []);
 
 //EOF

@@ -8,92 +8,66 @@
  * Pin 8 = Green 2
  * Pin 9 = Green 1 
  */
- 
-/* Note: Green and Blue are switched on the LED strips we purchased
- * blue and green have therefore been switched below:
- * Pin 2 = Green 1
- * Pin 5 = Green 2
- * Pin 8 = Blue 1
- * Pin 9 = Blue 2
- */
 
 // initialize some handy values
 // PWM frequency in Hz
 local pwm_f = 500.0;
-// initial duty cycle for each channel (all on to start)
-local redDuty1 = 1.0;
-local bluDuty1 = 1.0;
-local grnDuty1 = 1.0;
-local redDuty2 = 1.0;
-local bluDuty2 = 1.0;
-local grnDuty2 = 1.0;
 
 // Configure hardware
-hardware.pin1.configure(PWM_OUT, 1.0/pwm_f, redDuty1);
-hardware.pin2.configure(PWM_OUT, 1.0/pwm_f, grnDuty1);
-hardware.pin5.configure(PWM_OUT, 1.0/pwm_f, grnDuty2);
-hardware.pin7.configure(PWM_OUT, 1.0/pwm_f, redDuty2);
-hardware.pin8.configure(PWM_OUT, 1.0/pwm_f, bluDuty2);
-hardware.pin9.configure(PWM_OUT, 1.0/pwm_f, bluDuty1);
+hardware.pin1.configure(PWM_OUT, 1.0/pwm_f, 1.0);
+hardware.pin2.configure(PWM_OUT, 1.0/pwm_f, 1.0);
+hardware.pin5.configure(PWM_OUT, 1.0/pwm_f, 1.0);
+hardware.pin7.configure(PWM_OUT, 1.0/pwm_f, 1.0);
+hardware.pin8.configure(PWM_OUT, 1.0/pwm_f, 1.0);
+hardware.pin9.configure(PWM_OUT, 1.0/pwm_f, 1.0);
 
 server.log("Hardware Configured");
 
-function setDuty() {
-    hardware.pin1.write(redDuty1);
-    hardware.pin7.write(redDuty2);
-    hardware.pin2.write(grnDuty1);
-    hardware.pin5.write(grnDuty2);
-    hardware.pin8.write(bluDuty2);
-    hardware.pin9.write(bluDuty1);
-    
-}
-
-class rgbInput1 extends InputPort
+class rgbInput extends InputPort
 {
-    name = "RGB Input 1"
     type = "color"
+    redPin = null
+    grnPin = null
+    bluPin = null
+    
+    constructor(name, redPin, grnPin, bluPin) {
+        base.constructor(name)
+        this.redPin = redPin
+        this.grnPin = grnPin
+        this.bluPin = bluPin
+    }
     
     function set(value) {
         local red = value[0].tointeger();
-        local blu = value[1].tointeger();
-        local grn = value[2].tointeger();
-        /*
-        server.log(format("Red: %d",red));
-        server.log(format("Green: %d",grn));
-        server.log(format("Blue: %d", blu));
-        */
-        redDuty1 = red*(1.0/255.0);
-        grnDuty1 = grn*(1.0/255.0);
-        bluDuty1 = blu*(1.0/255.0);
+        local blue = value[1].tointeger();
+        local green = value[2].tointeger();
         
-        setDuty();
+        this.redPin.write(red*(1.0/255.0));
+        this.grnPin.write(green*(1.0/255.0));
+        this.bluPin.write(blue*(1.0/255.0));
     }
 }
 
-class rgbInput2 extends InputPort
+class switchInput extends InputPort
 {
-    name = "RGB Input 2"
-    type = "color"
+    name = "Switch Input"
+    type = "On/Off"
     
     function set(value) {
-        local red = value[0].tointeger();
-        local blu = value[1].tointeger();
-        local grn = value[2].tointeger();
-        /*
-        server.log(format("Red: %d",red));
-        server.log(format("Green: %d",grn));
-        server.log(format("Blue: %d", blu));
-        */
-        redDuty2 = red*(1.0/255.0);
-        grnDuty2 = grn*(1.0/255.0);
-        bluDuty2 = blu*(1.0/255.0);
-        
-        setDuty();
+        if (value == 0) {
+            hardware.pin1.write(0.0);
+            hardware.pin2.write(0.0);
+            hardware.pin5.write(0.0);
+            hardware.pin7.write(0.0);
+            hardware.pin8.write(0.0);
+            hardware.pin9.write(0.0);
+        }
     }
 }
 
 server.log("Quinn Started");
-imp.configure("Quinn", [ rgbInput1(), rgbInput2() ], []);
+local ch1 = rgbInput("Channel 1", hardware.pin1, hardware.pin9, hardware.pin2);
+local ch2 = rgbInput("Channel 2", hardware.pin7, hardware.pin8, hardware.pin5);
+imp.configure("Quinn", [ ch1, ch2, switchInput() ], []);
 
-setDuty();
 //EOF
