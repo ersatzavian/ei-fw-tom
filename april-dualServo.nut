@@ -50,6 +50,6 @@ class Servo extends InputPort
 // The first parameter Sets the text shown on the top line of the node in the planner - i.e., what this node is
 // The second parameter is a list of input ports in square brackets
 // The third parameter is a list of output ports in square brackets
-imp.configure("April Dual Servo Controller", [Servo("Servo 1", hardware.pin1), Servo("Servo 2", hardware.pin2)], []);
+imp.configure("April Dual Servo Controller", [Servo("Pan", hardware.pin1), Servo("Tilt", hardware.pin2)], []);
 
 //EOF
