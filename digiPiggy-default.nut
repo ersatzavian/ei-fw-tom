@@ -2,8 +2,6 @@
 // Reports most recent coin, total contents
 // Input port for resetting the bank
 
-// T. Buttner, 11/19/2012
-
 /* How to read the coin detector
  *  This bank did not provide us a simple serial-out or other ordinary method of detecting coins
  *  Instead, we have to poll a series of switches, measure maximum displacement, and figure out the coin ourselves.
@@ -32,11 +30,14 @@
  *      
 */
 
-local out_lastCoin = OutputPort("Last Coin Value");
-local out_total = OutputPort("Total Value");
-
-// debug outputs
-local out_position = OutputPort("Current Switch Position");
+// Single HTTP Out Port
+// Sends value of last coin
+// Sends 3 for lid open event
+// Sends 4 for lid closed event
+local out_webIfc = OutputPort("HTTP Out");
+// single output port for planner messages. This will mostly just show things that are being logged (nice strings)
+// Most of the time, this will just show the total in the bank - will also show lid opened/closed events
+local out_planIfc = OutputPort("Planner Interface");
 
 function checkPosition() {
     hardware.pin9.write(0);
@@ -101,17 +102,22 @@ function checkPosition() {
 function getMaxPosition() {
     local maxPosition = 0;
     local lastPosition = 0;
+    local positionCount = 0;
     local position = -1;
     
     while (position != 0) {
         position = checkPosition();
-        // only grab a position value if it is repeated
+        // only grab a position value if it is repeated several times
         // this prevents us from catching transitions between states
         if (position == lastPosition) {
+            positionCount++;
+        }
+        if (positionCount > 3) {
             server.log(format("Position = %d", position));
             if (position > maxPosition) {
                 maxPosition = position;
-            }            
+            }
+            positionCount = 0;
         }
         lastPosition = position;
     }
@@ -145,8 +151,7 @@ function getCoin() {
     }
     
     if (newCoin > 0.0) {
-        out_lastCoin.set(newCoin);
-        server.show(format("Added $%1.2f",newCoin)); 
+        out_webIfc.set(newCoin);
     }
     
     // store the total in nonvolatile memory so we can go back to sleep
@@ -156,8 +161,38 @@ function getCoin() {
         nv <- {coinTotal = newCoin};
     }
     server.show(format("Total = $%1.2f", nv.coinTotal));
-    out_total.set(nv.coinTotal);
+    out_planIfc.set(format("Total = $1.2f", nv.coinTotal));
     
+}
+
+function lidStateChanged() {
+    local lidState = hardware.pin8.read();
+    if (!lidState) {
+        out_webIfc.set(3);
+        out_planIfc.set("Lid Opened");
+        server.log("WARNING! Lid Opened!");
+    } else {
+        out_webIfc.set(4);
+        out_planIfc.set("Lid Opened");
+        server.log("Lid Closed.");
+    }
+}
+
+class resetInput extends InputPort {
+    name = "Reset Input"
+    type = "Boolean"
+    
+    function set(value) {
+        if (value) {
+            if (("nv" in getroottable()) && ("coinTotal" in nv)) {
+                nv.coinTotal = 0;
+            } else {
+                nv <- {coinTotal = 0};
+            }
+            out_planIfc.set(format("Total = $%1.2f", nv.coinTotal));
+            server.show(format("Total = $%1.2f", nv.coinTotal));
+        }
+    }
 }
 
 // coin-detection inputs
@@ -173,7 +208,7 @@ hardware.pin7.write(1);
 hardware.pin9.write(1);
 
 // lid open input
-hardware.pin8.configure(DIGITAL_IN_PULLDOWN);
+hardware.pin8.configure(DIGITAL_IN_PULLDOWN, lidStateChanged);
 server.log("Hardware Configured");
 
-imp.configure("Digi-Piggy", [], [out_position, out_lastCoin, out_total]);
+imp.configure("Digi-Piggy", [resetInput()], [out_webIfc, out_planIfc]);
