@@ -209,6 +209,10 @@ hardware.pin9.write(1);
 
 // lid open input
 hardware.pin8.configure(DIGITAL_IN_PULLDOWN, lidStateChanged);
+
+// set wifi power save on (slightly increases transaction latency, substantially reduces power draw)
+imp.setpowersave(true);
+
 server.log("Hardware Configured");
 
 imp.configure("Digi-Piggy", [resetInput()], [out_webIfc, out_planIfc]);
