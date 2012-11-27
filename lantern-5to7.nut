@@ -6,6 +6,9 @@ imp.setpowersave(true);
 
 server.log("Hardware Configured");
 
+imp.configure("Lantern", [], []);
+
+
 // light lantern at 5 PM
 // Note that the imp takes the current time in GMT
 local wakeAtHour = 1;
@@ -42,5 +45,3 @@ server.log(format("Lantern Off at %d:%02d", currentTime.hour, currentTime.min));
 
 // deep sleep until it's time to turn on the lantern
 server.sleepuntil(wakeAtHour, wakeAtMinute);
-
-imp.configure("Lantern", [], []);
