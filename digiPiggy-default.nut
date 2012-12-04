@@ -161,7 +161,7 @@ function getCoin() {
         nv <- {coinTotal = newCoin};
     }
     server.show(format("Total = $%1.2f", nv.coinTotal));
-    out_planIfc.set(format("Total = $1.2f", nv.coinTotal));
+    out_planIfc.set(format("Total = $%1.2f", nv.coinTotal));
     
 }
 
@@ -174,7 +174,7 @@ function lidStateChanged() {
     } else {
         out_webIfc.set(4);
         out_planIfc.set("Lid Opened");
-        server.log("Lid Closed.");
+        server.log("Lid Closed");
     }
 }
 
@@ -197,7 +197,7 @@ class resetInput extends InputPort {
 
 // coin-detection inputs
 // pin 1 is pulled down internally with a strong pullup externally
-hardware.pin1.configure(DIGITAL_IN_WAKEUP, getCoin);
+hardware.pin1.configure(DIGITAL_IN_PULLUP, getCoin);
 hardware.pin2.configure(DIGITAL_IN_PULLDOWN);
 hardware.pin5.configure(DIGITAL_IN_PULLUP);
 
