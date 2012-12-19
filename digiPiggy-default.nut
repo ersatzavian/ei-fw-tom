@@ -39,6 +39,9 @@ local out_webIfc = OutputPort("HTTP Out");
 // Most of the time, this will just show the total in the bank - will also show lid opened/closed events
 local out_planIfc = OutputPort("Planner Interface");
 
+// set wifi power save on (slightly increases transaction latency, substantially reduces power draw)
+imp.setpowersave(true);
+
 function checkPosition() {
     hardware.pin9.write(0);
     local pin1_9Lo = hardware.pin1.read();
@@ -151,7 +154,7 @@ function getCoin() {
     }
     
     if (newCoin > 0.0) {
-        out_webIfc.set(newCoin);
+        out_webIfc.set(format("%0.2f",newCoin));
     }
     
     // store the total in nonvolatile memory so we can go back to sleep
@@ -209,9 +212,6 @@ hardware.pin9.write(1);
 
 // lid open input
 hardware.pin8.configure(DIGITAL_IN_PULLDOWN, lidStateChanged);
-
-// set wifi power save on (slightly increases transaction latency, substantially reduces power draw)
-imp.setpowersave(true);
 
 server.log("Hardware Configured");
 
