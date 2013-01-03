@@ -26,24 +26,40 @@ function readCell() {
 
 function readWeight() {
     local weight = (readCell() - tareValue) * (1.0 / scaleFactorOz);
-    weight_out.set(format("%0.2f",weight));
-    server.show(format("%0.2f oz",weight));
+    weight_out.set(format("%0.1f",weight));
+    server.show(format("%0.1f oz",weight));
     
     imp.wakeup(1.0, readWeight);
 }
 
 function tare() {
+    server.log("Setting Tare Value");
     tareValue = readCell();
 }
 
-// Ports 
+function checkForSleep() {
+    if (hardware.pin1.read() == 0) {
+        server.log("Going to sleep");
+        // sleep on idle - server.sleepuntil puts the imp to sleep *immediately*, so this is better
+        imp.onidle(goToSleep());
+    }
+}
 
+function goToSleep() {
+    // wake once a day just to check in. Not vital. Wake-up pin will override and wake imp.
+    server.sleepuntil(0.0,0.0);
+}
+
+// Ports 
 local outWeight = OutputPort("Weight");
 
 // Configuring pins
-
-hardware.pin1.configure(DIGITAL_IN, tare);
+hardware.pin1.configure(DIGITAL_IN_WAKEUP, checkForSleep);
+hardware.pin5.configure(DIGITAL_IN, tare);
 hardware.pin2.configure(ANALOG_IN);
+
+// WiFi Powersave
+imp.setpowersave(true);
 
 server.log("Hardware Configured");
 
