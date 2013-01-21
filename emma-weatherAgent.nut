@@ -333,12 +333,12 @@ function setDisplay() {
     startAls();
     
     // schedule next check for .5 seconds from now
-    imp.wakeup(0.2, setDisplay);
+    imp.wakeup(0.16, setDisplay);
 }
 
 class displayInput extends InputPort
 {
-    name = "8-Char Input"
+    name = "Input"
     type = "string"
     
     // we prepare the string for printing here
@@ -357,6 +357,11 @@ class displayInput extends InputPort
         overSizeStringPos = 0;
     }
 }
+
+agent.on("newData", function(data){
+    server.log(format("Imp got new data: %s",data));
+    displayInput.set(data);
+});
 
 // Time mm:ss
 imp.configure("Emma 8-Char Display", [displayInput()], [out_lux]);
