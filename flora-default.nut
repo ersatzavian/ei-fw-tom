@@ -5,7 +5,7 @@ local out1 = OutputPort("Water level");
 imp.configure("Water level sensor", [], [out1]);
 
 // moar battery life
-//imp.setpowersave(true);
+// imp.setpowersave(true);
 
 local enable = hardware.pin9;
 local counter = hardware.pin1;
