@@ -3,10 +3,10 @@
 // in abscense of an actual duration in current traffic in Google Directions API
 // Another fine product of the first EI company hackathon, 2/19/13
 
-local baseURL = "YOUR SHIM HERE";
+local baseURL = "http://demo2.electricimp.com/cgi-bin/gmaps.rb";
 
 // this should later be updated to self-update from run to run via server.save() and server.load()
-local routeString = "5050 El Camino Real Los Altos, CA to 1675 20th Ave, San Francisco CA";
+local routeString = "5050 El Camino Real Los Altos CA to 1675 20th Ave San Francisco ";
 
 http.onrequest(function(request,res){
     server.log("Agent got request: "+request.body);
@@ -31,20 +31,38 @@ http.onrequest(function(request,res){
 });
 
 function getTraffic () {
-    imp.wakeup((20*60), getTraffic);
-    
-    local req = http.post(baseURL, {}, http.urlencode({route=routeString}));
-    server.log("Agent: Getting new traffic data.");
-    local resp = req.sendsync();
-    local trafficTable = http.jsondecode(resp.body);
-    try {
-        server.log(format("Agent: Travel time for %s: %s (%s)",routeString,trafficTable.time,trafficTable.color));
-        device.send("trafficUpdate",trafficTable.color);
-    } catch (err) {
-        server.log("Error parsing traffic data: "+resp.body)
-        return 1;
+    local now = date(time(),'l');
+    //server.log("The hour is "+now.hour+" GMT");
+    local localHour = now.hour - 7;
+    server.log("The local hour is "+localHour+" PST");
+    if ((localHour > 9) || (localHour < 6)) {
+        server.log("Outside of peak traffic window");
+        if (localHour < 6) {
+            local sleepTime = (((6 - localHour) * 60) - now.min);
+            server.log("Sleeping for "+sleepTime+" minutes");
+            imp.wakeup((sleepTime * 60), getTraffic);
+        } else {
+            // it's after 10
+            local sleepTime = ((6*60) + ((24 - localHour)*60) - now.min);
+            server.log("Sleeping for "+sleepTime+" minutes");
+            imp.wakeup((sleepTime * 60), getTraffic);
+        }
+    } else {
+        imp.wakeup((20*60), getTraffic);
+        // it's between 6 and 10 AM, go get the data.
+        local req = http.post(baseURL, {}, http.urlencode({route=routeString}));
+        server.log("Agent: Getting new traffic data.");
+        local resp = req.sendsync();
+        local trafficTable = http.jsondecode(resp.body);
+        try {
+            server.log(format("Agent: Travel time for %s: %s (%s)",routeString,trafficTable.time,trafficTable.color));
+            device.send("trafficUpdate",trafficTable.color);
+        } catch (err) {
+            server.log("Error parsing traffic data: "+resp.body)
+            return 1;
+        }
+        return 0;
     }
-    return 0;
 }
 
 getTraffic();
