@@ -30,10 +30,15 @@ class printer {
     ESC J       -> Print and feed n dots paper
     ESC d       -> Print and feed n lines
     */
+    // some basic printer parameters
+    printDensity = 14 // yields 120% density, experimentally determined to be good
+    printBreakTime = 4 // 500 us; slower but darker
+    dotPrintTime = 30000; // time to print a single-dot line in us
+    dotFeedTime = 2100; // time to feed a single-dot line in us
     // current mode of the printer, in case we need to check and see
     lineSpacing = 32
     bold = false
-    underline = 0
+    underline = false
     justify = "left"
     reverse = false
     updown = false
@@ -69,7 +74,7 @@ class printer {
         this.deleteLine = false;
         this.justify = "left";
         this.bold = false;
-        this.underline = 0;
+        this.underline = false;
         this.lineSpacing = 32;
         
         // reset the image download pointer
@@ -82,6 +87,31 @@ class printer {
         // send the printer reset command
         hardware.uart57.write(ESC);
         hardware.uart57.write('@');
+
+        // set the basic printer settings
+        hardware.uart57.write(ESC);
+        hardware.uart57.write('7');
+        // ESC 7 n1 n2 n3 
+        // n1 = 0-255: max printing dots, unit = 8 dots, default = 7 (64 dots)
+        // n2 = 3-255: heating time, unit = 10 us, default = 80 (800 us)
+        // n3 = 0-255: heating interval, unit = 10 us, default = 2 (20 us)
+        // first, set the "printing dots"
+        // more max dots -> faster printing. Max heating dots is 8*(n1+1)
+        // more heating -> slower printing
+        // not enough heating -> blank page
+        hardware.uart57.write(20); // Adafruit's library uses this default setting as well
+        // now set the heating time
+        hardware.uart57.write(255); // max heating time
+        // last, the heat interval
+        hardware.uart57.write(250); // 500 us -> slower but darker
+
+        // set the print density as well
+        hardware.uart57.write(18);
+        hardware.uart57.write(35); 
+        // 18 35 N
+        // N[4:0] sets printing density (50% + 5% * N[4:0])
+        // N[7:5] sets printing break time (250us * N[5:7])
+        hardware.uart57.write((this.printBreakTime << 5) | this.printDensity);
         
         imp.sleep(1);
         server.log("Printer Ready.");
@@ -91,6 +121,7 @@ class printer {
     function print(printStr) {
         // load the string into the buffer
         hardware.uart57.write(printStr);
+        hardware.uart57.write("\n");
         // print the buffer
         hardware.uart57.write(FF);
     }
@@ -109,6 +140,8 @@ class printer {
             // reset image download pointers
             this.imageDataLength = 0;
             this.loadedDataLength = 0;
+            // tell the agent we're done and it should reset download pointers too
+            agent.send("imageDone", 0);
             imp.sleep(0.5);
             this.reset();
             server.log("Device: done loading image");
@@ -124,7 +157,6 @@ class printer {
         //hardware.uart57.write(this.imageHeight);
         hardware.uart57.write(buffer);
         imp.sleep(0.02);
-        //server.log("Device: done printing row.");
     }
     
     // print the buffer and feed n lines
@@ -195,14 +227,17 @@ class printer {
     }
     
     // set underline weight
-    function setUnderline(weight) {
-        if (weight < 0 || weight > 2) {
-            server.error("Invalid Underline Weight (0-2)");
+    function setUnderline(value = true) {
+        // send the command to set underline weight
+        hardware.uart57.write(ESC);
+        hardware.uart57.write(0x2D);
+        // we'll just support two weights: none and "2" (max)
+        if (value) {
+            hardware.uart57.write(2);
+            this.underline = true;
         } else {
-            hardware.uart57.write(ESC);
-            hardware.uart57.write(0x2D);
-            hardware.uart57.write(weight);
-            this.underline = weight;
+            hardware.uart57.write(0);
+            this.underline = false;
         }
     }
     
@@ -281,18 +316,19 @@ class printer {
 }
 
 myPrinter <- printer();
-// print the imp logo on startup
-agent.send("logo", null);
 
 function ei() {
     myPrinter.setJustify("center");
     myPrinter.setBold(true);
     myPrinter.print("electric imp");
-    myPrinter.feed(2);
+    myPrinter.feed(1);
     myPrinter.reset();
 }
 
+// print the imp logo on startup
+agent.send("logo", null);
 imp.wakeup(12.0, ei);
+// once this callback is done, we've printed the logo and "electric imp" and reset the printer
 
 // Register some hooks for the agent to call, allowing the agent to push actions to the device
 // the most obvious: print a buffer of data
