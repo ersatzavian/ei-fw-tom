@@ -315,6 +315,8 @@ class printer {
 
 }
 
+// Actual execution picks up here
+// instatiate the printer object at global scope
 myPrinter <- printer();
 
 function ei() {
@@ -329,6 +331,7 @@ function ei() {
 agent.send("logo", null);
 imp.wakeup(12.0, ei);
 // once this callback is done, we've printed the logo and "electric imp" and reset the printer
+
 
 // Register some hooks for the agent to call, allowing the agent to push actions to the device
 // the most obvious: print a buffer of data

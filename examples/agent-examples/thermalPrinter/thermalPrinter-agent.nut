@@ -1,23 +1,20 @@
 // Electric Imp Thermal Printer Agent
-/* Things this agent could do:
+/* Things your agent could do:
     1. Poll an API (here's your meetings for the day, here's your email, here's your task list, weather, stocks...)
     2. Receive data pushed to the electric imp cloud from external sources (push messages from Adium down to your printer, etc.)
     3. Relay data through other web services (run an image library in a server, use it to make bitmaps and send to the printer)
     4. So much more...
+
+    For the purpose of this demo, we have a website that pushes a small block of JSON down to print text messages.
+    The JSON includes the message body, as well as text parameters like alignment, bold, underline, inverted, etc.
+
+    We've also included
 */
 
 server.log("Printer Agent Started");
 
-// a handy function to convert strings to blobs, which we use when chunking .bmp files
-function toBlob(str) {
-    local buffer = blob(str.len());
-    for (local i = 0; i < str.len(); i++) {
-        buffer.writen(str[i], 'b');
-    }
-    return buffer;
-}
-
 // a list of message parameters we support
+// we really only need the keys, but put in dummy values to prevent the possibility of a non-working state
 msgParams <- {
     justify = "left",
     bold = false,
@@ -34,13 +31,16 @@ imageEnd <- 0
 imageHeight <- 0
 imageWidth <- 0
 imageLine <- 0
-// image start = imageEnd + imageSize
 // print the electric imp logo! 
 function printLogo() {
-    //First, download it
+    //First, download it from the electric imp server
     local reqURL = "http://demo2.electricimp.com/printer/ei_logo_tinyprinter.bmp";
+    // Note: bitmaps should be 384 pixels wide
+    // if you don't pre-size your image properly, the printer will just mangle it
+    // also note that the header-reading below is specific to a classic "BM" bitmap, with
+    // a standard DIB header.
     local req = http.get(reqURL);
-    imageData = toBlob(req.sendsync().body);
+    imageData = req.sendsync().body;
     
     // there are headers in a bitmap, and they're nasty.  
     // The size of the pixel array is in bytes 34-37, LSB-first
@@ -98,14 +98,6 @@ device.on("imageDone", function(value) {
 
 // this function responds to http requests to the agent URL
 http.onrequest(function(request,res){
-    
-    /*
-    server.log("Agent got request to path: "+request.path);
-    foreach (key,value in request) {
-        server.log(key+": "+value);
-    }
-    */
-    
     // regardless of response, we need the proper headers to allow cross-origin requests
     // NOTE: You may want to set this field to allow only the domain you expect (and want to allow)
     // requests from. 
