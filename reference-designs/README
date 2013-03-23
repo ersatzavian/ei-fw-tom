@@ -1,0 +1,3 @@
+This folder contains bundles for electric imp reference designs, which are posted to http://devwiki.electricimp.com/doku.php?id=boards:start when ready for public release. 
+
+Bundles should be promoted to this directory from dev only when the hardware and firmware are both stable enough to be considered release-ready.

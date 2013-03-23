@@ -1,0 +1,7 @@
+dev/
+
+This directory contains firmware that is incomplete, waiting on new API features, under active development but not ready for use, or backlogged. Each folder represents a single model bundle; a device firmware at minimum, optionally with an agent. 
+
+Files from this directory will be moved to their permanent resting place when:
+1. They are completed and promoted to an example, reference design, or impHQ demo bundle
+2. They become obsolete or irrelevant and moved to old/

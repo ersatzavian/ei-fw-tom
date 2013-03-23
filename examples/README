@@ -1,0 +1,5 @@
+This directory contains device or bundle examples used for the developer wiki, instructables, or other user examples.
+
+This directory does *not* contain example code for reference designs (with custom PCBs). These bundles go in reference-designs. 
+
+Most examples will be stored in agent-examples, groupled by bundle. The device-examples directory is for device firmware examples of basic hardware tasks such as GPIO toggling, I2C transactions, SPI, UART, etc.

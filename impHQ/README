@@ -1,0 +1,11 @@
+These bundles and/or device firmwares are for demos and one-off projects at imp HQ. These projects may eventually:
+
+1. Move to the examples directory - if they're simple enough to be built without a custom PCB, or don't involve any hacks so abhorent as to be discouraged from use.
+
+2. Move to the reference designs directory - if the project is useful enough to warrant a custom PCB and is posted to the hardware examples page at http://devwiki.electricimp.com/doku.php?id=boards:start
+
+Projects will typically move here from dev if they:
+
+1. Came from a hackathon
+2. Came from a special-purpose demo
+3. Were built to test a concept that was not, for some reason or another, integrated into a reference design or developer example
