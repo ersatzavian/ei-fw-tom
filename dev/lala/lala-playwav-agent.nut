@@ -64,8 +64,8 @@ function playTest() {
     wavBlob.seek(0,'b');
     
     //Download audio from the electric imp server
-    //fetch("http://demo2.electricimp.com/wav/extra_poetic_alaw.wav");
-    fetch("http://demo2.electricimp.com/wav/chirp.wav");
+    fetch("http://demo2.electricimp.com/wav/extra_poetic_alaw.wav");
+    //fetch("http://demo2.electricimp.com/wav/shortchirp.wav");
     
     if (getFormatData()) {
         server.log("Agent: failed to get audio format data for file");

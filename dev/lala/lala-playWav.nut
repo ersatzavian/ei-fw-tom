@@ -21,7 +21,7 @@ imp.configure("Lala Audio Playback", [],[]);
 /* SAMPLER AND FIXED-FREQUENCY DAC -------------------------------------------*/
 
 // buffers and sample rate for sampler and fixed-frequency DAC
-sampleRate <- 16000;
+sampleRate <- 16000.0;
 buffer1 <- blob(2000);
 buffer2 <- blob(2000);
 buffer3 <- blob(2000);
@@ -58,7 +58,7 @@ hardware.sampler.configure(hardware.pin2, sampleRate, [buffer1,buffer2,buffer3],
     samplesReady);
 
 // callback for the fixed-frequency DAC
-function bufferEmpty() {
+function bufferEmpty(buffer) {
     server.log("FFD Buffer empty");
     if (!buffer) {
         server.log("FFD Buffer underrun");
@@ -67,6 +67,7 @@ function bufferEmpty() {
     // return the pointer to the beginning of the buffer
     buffer.seek(0,'b');
     if (playbackPtr >= playbackBufferLen) {
+        server.log("Not reloading buffers; end of message");
         // we're at the end of the message buffer, so don't reload the DAC
         // the DAC will be stopped before it runs out of buffers anyway
         return;
@@ -78,6 +79,7 @@ function bufferEmpty() {
 
 // prep buffers to begin message playback
 function loadPlayback() {
+    server.log("Device: loading buffers before starting playback");
     playbackPtr = 0;
     // make sure buffers' pointers are all at the beginning of the buffer
     buffer1.seek(0,'b');
@@ -92,10 +94,12 @@ function loadPlayback() {
     playbackPtr += buffer3.len();
     
     // configure the DAC
-    hardware.fixedfrequencydac.configure(hardware.pin5, sampleRate, [buffer1,buffer2,buffer3], bufferEmpty);
+    hardware.fixedfrequencydac.configure(hardware.pin5, sampleRate, [buffer1,buffer2,buffer3], bufferEmpty, A_LAW_DECOMPRESS);
+    server.log("Device: DAC configured");
 }
 
 function stopPlayback() {
+    server.log("Device: Stopping Playback");
     // stop the DAC
     hardware.fixedfrequencydac.stop();
     // disable the speaker
@@ -165,6 +169,10 @@ function pollButtons() {
     if (b2 != button2) {
         button2 = b2;
         if (!button2) {
+            if (playing) {
+                server.log("Device: Playback already in progress");
+                return;
+            }
             playMessage();
         }
     }
@@ -175,6 +183,8 @@ function recordMessage() {
 }
 
 function playMessage() {
+    // clear new message flag
+    newMessage = false;
     server.log("Device: playing back stored message from flash");
     // wake the flash, as we'll be using it now
     flash.wake();
@@ -183,12 +193,12 @@ function playMessage() {
     // set the playing flag
     playing = true;
     // schedule the dac to stop running when we're done
-    imp.wakeup((playbackBufferLen * 1.0) / (sampleRate * 1.0), stopPlayback);
+    imp.wakeup(((playbackBufferLen * 1.0) / (sampleRate * 1.0)), stopPlayback);
     // enable the speaker
     hardware.pinB.write(1);
     // start the dac
+    server.log("Device: starting the DAC");
     hardware.fixedfrequencydac.start();
-
 }
 
 /* CLASS DEFINITIONS ---------------------------------------------------------*/
