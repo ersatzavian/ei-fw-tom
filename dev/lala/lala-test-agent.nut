@@ -8,6 +8,7 @@ audio <- blob(20000);
 bufferCount <- 0;
 
 device.on("audioBuffer", function(data) {
+    server.log(typeof(data));
     audio.writeblob(data.readblob(data.len()));
     bufferCount++;
 });

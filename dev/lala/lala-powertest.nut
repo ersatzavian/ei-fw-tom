@@ -1,5 +1,6 @@
-// Lala "imp communicator"
-// Two-way audio impee with 4MB SPI flash, 
+// Lala current measurement firmware
+// Press a button to cycle power modes
+
 // Pinout:
 // 1 = Wake / SPI CLK
 // 2 = Sampler (Audio In)
@@ -14,57 +15,28 @@
 // D = User LED
 // E = Button 2
 
-imp.setpowersave(true);
+sampleRate <- 8000;
 
-buffer1 <- blob(16000);
-
-// configure spi bus for spi flash
-hardware.spi189.configure(CLOCK_IDLE_LOW | MSB_FIRST, 100);
-
-function bufferEmpty(buffer)
-{
-    server.log("In bufferEmpty");
-    if (!buffer) {
-        server.log("Underrun");
-        return;
-    }
- 
-    hardware.fixedfrequencydac.addbuffer(buffer);
-}
-
-
+buffer1 <- blob(2000);
+buffer2 <- blob(2000);
+buffer3 <- blob(2000);
 // callback and buffers for the sampler
 function samplesReady(buffer, length) {
-    hardware.sampler.stop();
-    
     if (length > 0) {
-        //local b = blob(length);
-        //buffer.seek(0);
-        //b.writeblob(buffer.readblob(length));
-        //agent.send("audioBuffer", b);
-        //server.log("sent buffer, len "+length)
-        //server.log(length);
-        server.log("playing");
-hardware.fixedfrequencydac.configure(hardware.pin5, 8000, [buffer1], bufferEmpty);
-        hardware.fixedfrequencydac.start();
-
+        // got a buffer
     } else {
-        server.log("Overrun");
+        //server.log("Overrun");
     }
 }
+
 function stopSampler() {
     server.log("Stopping sampler");
-    // turn off the aux LED
-    hardware.pinD.write(0);
     // stop the sampler
     hardware.sampler.stop();
-    // signal to the agent that we're done
-    agent.send("audioDone", null);
-    // disable the microphone
-    mic.disable();
 }
+
 // configure the sampler at 8kHz
-hardware.sampler.configure(hardware.pin2, 8000, [buffer1], 
+hardware.sampler.configure(hardware.pin2, sampleRate, [buffer1,buffer2,buffer3], 
     samplesReady);
 
 // buttons
@@ -85,7 +57,8 @@ hardware.pinC.write(0);
 hardware.pinD.configure(DIGITAL_OUT);
 hardware.pinD.write(0);
 
-imp.configure("Lala Test", [],[]);
+// configure spi bus for spi flash
+hardware.spi189.configure(CLOCK_IDLE_LOW | MSB_FIRST, 15000);
 
 button1 <- 1;
 button2 <- 1;
@@ -96,57 +69,86 @@ function pollButtons() {
     if (b1 != button1) {
         server.log("Button 1 = "+b1);
         button1 = b1;
+        if (button1) {
+            nextMode();
+        }
     }
     if (b2 != button2) {
         server.log("Button 2 = "+b2);
         button2 = b2;
+        if (button2) {
+            nextMode();
+        }
     }
 }
-function button1Changed() {
-    server.log("Button 1 = "+hardware.pin6.read());
-}
-function button2Changed() {
-    server.log("Button 2 = "+hardware.pinE.read());
-}
 
-function checkBattery() {
-    // check every 5 minutes
-    imp.wakeup((5*60), checkBattery);
-    local Vbatt = (hardware.pinA.read()/65535.0) * hardware.voltage() * (6.9/2.2);
-    server.log(format("Battery Voltage %.2f V",Vbatt));
-}
+mode <- "IDLE";
+server.log("In idle mode, press again to enter wifi powersave mode");
 
-function blinkOff() {
-    imp.wakeup(5, blink);
-    hardware.pinD.write(0);
-}
-
-function blink() {
-    imp.wakeup(0.5, blinkOff);
-    hardware.pinD.write(1);
+function nextMode() {
+    if (mode == "IDLE") {
+        mode = "PWRSAVE";
+        //imp.setpowersave(true);
+        server.log("Entered wifi powersave mode, press again to enter record mode");
+    } else if (mode == "PWRSAVE") {
+        mode = "REC";
+        mic.enable();
+        hardware.sampler.start();
+        server.log("Entered record mode, press again to enter playback mode");
+    } else if (mode == "REC") {
+        mode = "PLAY";
+        // stop recording and turn off the mic
+        stopSampler();
+        mic.disable();
+        // enable speaker
+        hardware.pinB.write(1);
+        // hit the speaker with a PWM for full-scale signal
+        tone(500);
+        server.log("Entered playback mode, press again for flash erase")
+    } else if (mode == "PLAY") {
+        mode = "FLASH";
+        // stop playing the tone
+        endTone();
+        // disable the speaker
+        hardware.pinB.write(0);
+        // wake the flash
+        flash.wake();
+        server.log("In flash erase mode, press again to enter deep sleep");
+        // start erasing the flash
+        flash.erase();
+        server.log("Completed erase, flash awake and idling until next command");
+    } else if (mode == "FLASH") {
+        flash.sleep();
+        // we won't get here unless we're already done with a flash erase, which will block (doesn't have to, we just do)
+        mode = "SLEEP";
+        server.log("Entering deep sleep; press again to wake and idle");
+        // configure pin 1 for wakeup and go to sleep
+        hardware.pin1.configure(DIGITAL_IN_WAKEUP);
+        imp.onidle( function() {
+            // sleep for 5 minutes
+            server.sleepfor(900);
+        });
+    }
 }
 
 function endTone() {
-    server.log("Done with tone");
-    hardware.pinB.write(0);
     hardware.pin5.write(0.0);
 }
 
 function tone(freq) {
-    server.log(format("Playing %d Hz tone",freq));
-    hardware.pinB.write(1);
     hardware.pin5.configure(PWM_OUT, 1.0/freq, 0.5);
-    //imp.wakeup(time, endTone);
 }
 
 class microphone {
-    
     function enable() {
         hardware.pinC.write(1);
+        // wait for the LDO to stabilize
+        imp.sleep(0.05);
         server.log("Microphone Enabled");
     }
     function disable() {
         hardware.pinC.write(0);
+        imp.sleep(0.05);
         server.log("Microphone Disabled");
     }
 }
@@ -182,11 +184,6 @@ class spiFlash {
     
     // spi interface
     spi = hardware.spi189;
-    
-    constructor(spi) {
-        // pin 1 will always be configured as a wakeup source right before we sleep (along with using onidle)
-        this.spi = spi;
-    }
     
     // drive the chip select low to select the spi flash
     function select() {
@@ -345,38 +342,8 @@ class spiFlash {
 
 // instantiate class objects
 mic <- microphone();
-flash <- spiFlash(hardware.spi189);
-
-// turn on the 2.7V rail so we can measure it manually
-mic.enable();
+flash <- spiFlash();
+flash.sleep();
 
 // start polling the buttons and checking the battery voltage
 pollButtons(); // 100 ms polling interval
-checkBattery(); // 5 min polling interval
-//blink(); // start user LED blinking every 30 seconds
-
-// test out the flash
-flash.getID();
-// should read out "0xC2" for manufacturer code, "0x2016" for device id code
-server.log(format("Flash MFG ID: 0x%02x, DEV ID: 0x%04x", flash.mfgID, flash.devID));
-//flash.erase();
-//flash.test();
-
-server.log("Testing speaker with PWM...");
-tone(250);
-imp.sleep(0.25);
-tone(500);
-imp.sleep(0.25);
-hardware.pin5.write(0.0);
-
-server.log("Mic Recording for 10s");
-hardware.pinD.write(1);
-hardware.sampler.start();
-imp.wakeup(1, stopSampler);
-
-/* For external audio test
-// enable the speaker
-hardware.pinB.write(1);
-// high-Z the imp pin so we don't do something bad while using an external signal to test
-hardware.pin5.configure(ANALOG_IN);
-*/

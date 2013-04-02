@@ -91,6 +91,8 @@ function button2Changed() {
 function checkBattery() {
     // check every 5 minutes
     imp.wakeup((5*60), checkBattery);
+    mic.enable();
+    imp.sleep(0.01);
     local Vbatt = (hardware.pinA.read()/65535.0) * hardware.voltage() * (6.9/2.2);
     server.log(format("Battery Voltage %.2f V",Vbatt));
 }
@@ -343,15 +345,23 @@ server.log(format("Flash MFG ID: 0x%02x, DEV ID: 0x%04x", flash.mfgID, flash.dev
 
 server.log("Testing speaker with PWM...");
 tone(250);
-imp.sleep(0.25);
+imp.sleep(0.15);
 tone(500);
-imp.sleep(0.25);
+imp.sleep(0.15);
 hardware.pin5.write(0.0);
 
 server.log("Mic Recording for 10s");
 hardware.pinD.write(1);
 hardware.sampler.start();
 imp.wakeup(10, stopSampler);
+
+/*
+// Test pin 1 wakeup
+hardware.pin1.configure(DIGITAL_IN_WAKEUP);
+imp.onidle( function() {
+    server.sleepfor(90);
+});
+*/
 
 /* For external audio test
 // enable the speaker
