@@ -16,13 +16,18 @@ parameters <- {
     len = 0,
 }
 wavBlob <- blob(500000);
+// new message flag so that we can respond appropriately when polled
+newMessage <- false;
+
+// size of chunks to pull from device when fetching new recorded message
+CHUNKSIZE <- 8192;
 
 server.log("Lala wav playback agent running");
 server.log("Agent: free memory: "+imp.getmemoryfree());
 
 function fetch(url) {
     offset <- 0;
-    const LUMP = 1024;
+    const LUMP = 4096;
     server.log("Fetching content from "+url);
     do {
         response <- http.get(url, 
@@ -64,7 +69,8 @@ function playTest() {
     wavBlob.seek(0,'b');
     
     //Download audio from the electric imp server
-    fetch("http://demo2.electricimp.com/wav/extra_poetic_alaw.wav");
+    fetch("http://demo2.electricimp.com/wav/dynamo_alaw.wav");
+    //fetch("http://demo2.electricimp.com/wav/extra_poetic_alaw.wav");
     //fetch("http://demo2.electricimp.com/wav/shortchirp.wav");
     
     if (getFormatData()) {
@@ -114,6 +120,30 @@ function getFormatData() {
     return 0;
 }
 
+/* HTTP REQUEST HANDLER ------------------------------------------------------*/
+http.onrequest(function(request, res) {
+    server.log("Agent got new HTTP Request");
+    // we need to set headers and respond to empty requests as they are usually preflight checks
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Headers","Origin, X-Requested-With, Content-Type, Accept");
+    res.header("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
+
+    if (request.path == "/getmsg") {
+        if (newMessage) {
+            server.log("Agent: Responding with new audio buffer, len "+parameters.len);
+            wavBlob.seek(0,'b');
+            res.send(200, http.base64encode(wavBlob.readblob(parameters.len)));
+            newMessage = false;
+        } else {
+            server.log("Agent: Responding with 204");
+            res.send(204, "No new messages");
+        }
+    }
+    
+    // send a generic response to prevent browser hang
+    res.send(200, "OK");
+});
+
 /* DEVICE CALLBACK HOOKS -----------------------------------------------------*/
 // let the device initiate the playback test
 device.on("playtest", function(value) {
@@ -151,4 +181,28 @@ device.on("pull", function(size) {
     
     // send the data out to the device
     device.send("push", data);
+});
+
+device.on("newMessage", function(length) {
+    server.log("Agent: device signaled new message ready, length "+length);
+    newMessage = true;
+    // prep our buffer to begin writing in chunks from the device
+    wavBlob.seek(0,'b');
+    // use the file parameters table for pertinent information
+    parameters.len = length;
+    // tell the device we're ready to receive data; device will respond with "push" and a blob
+    device.send("pull", CHUNKSIZE);
+});
+
+device.on("push", function(chunk) {
+    local numChunks = (parameters.len / CHUNKSIZE) + 1;
+    local index = (wavBlob.tell() / CHUNKSIZE) + 1;
+    server.log(format("Agent: got chunk %d of %d, len %d", index, numChunks, chunk.len()));
+    wavBlob.writeblob(chunk);
+    if (index < numChunks) {
+        // there's more file to fetch
+        device.send("pull", CHUNKSIZE);
+    } else {
+        server.log("Agent: Done fetching recorded buffer from device");
+    }
 });

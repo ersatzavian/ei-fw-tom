@@ -22,44 +22,82 @@ imp.configure("Lala Audio Playback", [],[]);
 
 // buffers and sample rate for sampler and fixed-frequency DAC
 sampleRate <- 16000.0;
-buffer1 <- blob(2000);
-buffer2 <- blob(2000);
-buffer3 <- blob(2000);
+buffer1 <- blob(2048);
+buffer2 <- blob(2048);
+buffer3 <- blob(2048);
 
-// buffer lengths for playback and recording
+// pointers and flags for playback and recording
 playbackPtr <- 0;
 playbackBufferLen <- 0;
 playing <- false;
+recordPtr <- 0;
 recordBufferLen <- 0;
+recording <- false;
 
 // size of chunks to send between agent and device
-CHUNKSIZE <- 256;
+CHUNKSIZE <- 4096;
 
 // flag for new message downloaded from the agent
 newMessage <- false;
+// flag for new message waiting to go up to the agent
+uploadReady <- false;
 
 // callback and buffers for the sampler
 function samplesReady(buffer, length) {
     if (length > 0) {
         // got a buffer
+        // we can't write the whole buffer in at once; it has to be written to flash in pages (256 bytes each)
+        for (local i = 0; i < length; i+=256) {
+            local leftInBuffer = length - buffer.tell();
+            if (leftInBuffer < 256) {
+                //server.log(format("writing "+leftInBuffer+" bytes at 0x%06x",(46*64000)+(recordPtr+i)));
+                flash.write(((46*64000)+(recordPtr+i)), buffer.readblob(leftInBuffer));
+            } else {
+                flash.write(((46*64000)+(recordPtr+i)), buffer.readblob(256));
+            }
+        }
+        // advance the record pointer
+        recordPtr += length;
+        // reset the handle on the buffer; the sampler will pick it up again as it is needed
+        buffer.seek(0,'b');
     } else {
-        //server.log("Overrun");
+        server.log("Device: Sampler Buffer Overrun");
+        return;
     }
 }
 
-function stopSampler() {
-    server.log("Stopping sampler");
-    // stop the sampler
-    hardware.sampler.stop();
+function finishRecording() {
+    server.log("Device: done recording, stopping.");
+    // put the flash to sleep to save power
+    flash.sleep();
+    // remember how long the recorded buffer is
+    recordBufferLen = recordPtr;
+    // reset the record pointer; we'll use it to walk through flash and upload the message to the agent
+    recordPtr = 0;
+    // signal to the agent that we're ready to upload this new message
+    agent.send("newMessage", recordBufferLen);
+    // the agent will call back with a "pull" request, at which point we'll read the buffer out of flash and upload
 }
 
-// configure the sampler
-hardware.sampler.configure(hardware.pin2, sampleRate, [buffer1,buffer2,buffer3], 
-    samplesReady);
+function stopSampler() {
+    if (recording) {
+        server.log("Device: Stopping Sampler");
+        // stop the sampler
+        hardware.sampler.stop();
+        // clear the recording flag
+        recording = false;
+        // we erase pages at startup and after upload, so we don't need to do so again here
+        // disable the microphone preamp
+        mic.disable();
+        // the sampler will finish clearing its' buffers, so we need to wait before putting the flash back to sleep
+        // and signalling the agent we're ready for upload
+        imp.wakeup(((3*buffer1.len())/sampleRate), finishRecording);
+    }   
+}
 
 // callback for the fixed-frequency DAC
 function bufferEmpty(buffer) {
-    server.log("FFD Buffer empty");
+    //server.log("FFD Buffer empty");
     if (!buffer) {
         server.log("FFD Buffer underrun");
         return;
@@ -149,6 +187,9 @@ function pollButtons() {
         } else if (blinkCntr == 20) {
             hardware.pinD.write(0);
         }
+    } else if (recording) {
+        // let the LED stay on if we're recording
+        hardware.pinD.write(1);
     } else {
         // make sure the LED is off
         hardware.pinD.write(0);
@@ -163,23 +204,54 @@ function pollButtons() {
     if (b1 != button1) {
         button1 = b1;
         if (!button1) {
+            if (recording || playing) {
+                server.log("Device: operation already in progress");
+                return;
+            }
             recordMessage();
+        } else {
+            if (recording) {
+                stopSampler();
+            }
         }
     }
     if (b2 != button2) {
         button2 = b2;
         if (!button2) {
-            if (playing) {
-                server.log("Device: Playback already in progress");
+            if (recording || playing) {
+                server.log("Device: operation already in progress");
                 return;
             }
-            playMessage();
+            if (playbackBufferLen > 0) {
+                playMessage();
+            }
         }
     }
 }
 
 function recordMessage() {
     server.log("Device: recording message to flash");
+    // set the recording flag
+    recording = true;
+    // set the record pointer to zero; this points filled buffers to the proper area in flash
+    recordPtr = 0;
+    // wake up the flash
+    flash.wake();
+    // we erase pages at startup and after upload, so we don't need to do so again here
+    // enable the microphone preamp
+    mic.enable();
+    // make sure the buffers all have their handles in the proper place
+    buffer1.seek(0,'b');
+    buffer2.seek(0,'b');
+    buffer3.seek(0,'b');
+    // configure the sampler
+    hardware.sampler.configure(hardware.pin2, sampleRate, [buffer1,buffer2,buffer3], 
+        samplesReady, NORMALISE | A_LAW_COMPRESS);
+    // schedule the sampler to stop running at our max record time
+    imp.wakeup(30.0, stopSampler);
+    // start the sampler
+    server.log("Device: recording to flash");
+    hardware.sampler.start();
 }
 
 function playMessage() {
@@ -209,6 +281,7 @@ class microphone {
         imp.sleep(0.05);
         server.log("Microphone Enabled");
     }
+
     function disable() {
         hardware.pinC.write(0);
         imp.sleep(0.05);
@@ -281,6 +354,7 @@ class spiFlash {
     // note that page write can only set a given bit from 1 to 0
     // a separate erase command must be used to clear the page
     function write(offset, data) {
+        //server.log(format("Device: SPI writing %d bytes to offset 0x%06x",data.len(), offset));
         this.wrenable();
         
         // check the status register's write enabled bit
@@ -300,12 +374,12 @@ class spiFlash {
         
         // wait for the status register to show write complete
         // typical 1.4 ms, max 5 ms
-        local timeout = 25;
-        while ((this.getStatus() & 0x01) && timeout > 0) {
-            imp.sleep(0.0002);
-            timeout--;
+        local start = hardware.micros();
+        local timeout = 50000; // time in us
+        while ((this.getStatus() & 0x01) && (hardware.micros() - start) < timeout) {
+            // waiting
         }
-        if (timeout == 0) {
+        if ((hardware.micros() - start) > timeout) {
             server.error("Device: Timed out waiting for write to finish");
             return 1;
         }
@@ -322,7 +396,7 @@ class spiFlash {
     
     function read(offset, bytes) {
         this.select();
-        // to read, send the read command, a 24-bit address, and a dummy byte
+        // to read, send the read command and a 24-bit address
         spi.write(READ);
         spi.write(format("%c%c%c", (offset >> 16) & 0xFF, (offset >> 8) & 0xFF, offset & 0xFF));
         local readBlob = spi.readblob(bytes);        
@@ -362,7 +436,7 @@ class spiFlash {
     // set any 4kbyte sector of flash to all 0xff
     // takes a starting address, 24-bit, MSB-first
     function sectorErase(addr) {
-        server.log(format("Device: erasing 4kbyte SPI Flash sector beginning at 0x%04x",addr));
+        //server.log(format("Device: erasing 4kbyte SPI Flash sector beginning at 0x%06x",addr));
         this.wrenable();
         this.select();
         spi.write(SE);
@@ -370,12 +444,12 @@ class spiFlash {
         this.unselect();
         // wait for sector erase to complete
         // typ = 60ms, max = 300ms
-        local timeout = 300; // time in tenths of a second
-        while ((this.getStatus() & 0x01) && timeout > 0) {
-            imp.sleep(0.001);
-            timeout--;
+        local start = hardware.micros();
+        local timeout = 300000; // time in us
+        while ((this.getStatus() & 0x01) && (hardware.micros() - start) < timeout) {
+            // waiting
         }
-        if (timeout == 0) {
+        if ((hardware.micros() - start) > timeout) {
             server.error("Device: Timed out waiting for sector erase to finish");
             return 1;
         }
@@ -386,7 +460,7 @@ class spiFlash {
     // set any 64kbyte block of flash to all 0xff
     // takes a starting address, 24-bit, MSB-first
     function blockErase(addr) {
-        server.log(format("Device: erasing 64kbyte SPI Flash block beginning at 0x%04x",addr));
+        //server.log(format("Device: erasing 64kbyte SPI Flash block beginning at 0x%06x",addr));
         this.wrenable();
         this.select();
         spi.write(BE);
@@ -394,12 +468,12 @@ class spiFlash {
         this.unselect();
         // wait for sector erase to complete
         // typ = 700ms, max = 2s
-        local timeout = 2000; // time in ms
-        while ((this.getStatus() & 0x01) && timeout > 0) {
-            imp.sleep(0.001);
-            timeout--;
+        local start = hardware.micros();
+        local timeout = 2000000; // time in us
+        while ((this.getStatus() & 0x01) && (hardware.micros() - start) < timeout) {
+            // waiting
         }
-        if (timeout == 0) {
+        if ((hardware.micros() - start) > timeout) {
             server.error("Device: Timed out waiting for sector erase to finish");
             return 1;
         }
@@ -416,12 +490,12 @@ class spiFlash {
         this.unselect();
         // chip erase takes a *while*
         // typ = 25s, max = 50s
-        local timeout = 50000; // time in ms
-        while ((this.getStatus() & 0x01) && timeout > 0) {
-            imp.sleep(0.001);
-            timeout--;
+        local start = hardware.micros();
+        local timeout = 50000000; // time in us
+        while ((this.getStatus() & 0x01) && (hardware.micros() - start) < timeout) {
+            // just wait here
         }
-        if (timeout == 0) {
+        if ((hardware.micros() - start) > timeout) {
             server.error("Device: Timed out waiting for chip erase to finish");
             return 1;
         }
@@ -432,7 +506,8 @@ class spiFlash {
     // erase the message portion of the SPI flash
     // 2880000 bytes is 45 64-kbyte blocks
     function erasePlayBlocks() {
-        for(local i = 0; i < 45; i++) {
+        server.log("Device: clearing playback flash sectors");
+        for(local i = 0; i < 46; i++) {
             if(this.blockErase(i*64000)) {
                 server.error(format("Device: SPI flash failed to erase block %d (addr 0x%06x)",
                     i, i*64000));
@@ -445,8 +520,9 @@ class spiFlash {
     // erase the record buffer portion of the SPI flash
     // this is a 960000-byte sector, beginning at block 46 and going to block 60
     function eraseRecBlocks() {
+        server.log("Device: clearing recording flash sectors");
         for (local i = 46; i < 60; i++) {
-            if(this.blockErase(i*640000)) {
+            if(this.blockErase(i*64000)) {
                 server.error(format("Device: SPI flash failed to erase block %d (addr 0x%06x)",
                     i, i*64000));
                 return 1;
@@ -474,7 +550,6 @@ agent.on("newAudio", function(len) {
     }
     // erase the message portion of the SPI flash
     // 2880000 bytes is 45 64-kbyte blocks
-    server.log("Device: Clearing playback flash sectors");
     // wake the flash in preparation for download
     flash.wake();
     flash.erasePlayBlocks();
@@ -490,15 +565,22 @@ agent.on("push", function(data) {
     // data.index is the segment number of this chunk
     // data.chunk is the chunk itself
     // allows for out-of-order delivery, and helps us place chunks in flash
-    local addr = data.index*CHUNKSIZE;
+    local index = data.index;
     local chunk = data.chunk;
-    server.log(format("Got buffer chunk %d from agent, len %d", addr, chunk.len()));
+    server.log(format("Got buffer chunk %d from agent, len %d", index, chunk.len()));
     // stash this chunk away in flash, then pull another from the agent
     // this allows us to throttle transmission from the agent
-    flash.write(addr,chunk);
+    for (local i = 0; i < chunk.len(); i+=256) {
+        local leftInChunk = chunk.len() - chunk.tell();
+        if (leftInChunk < 256) {
+            flash.write((index*CHUNKSIZE)+i, chunk.readblob(leftInChunk));
+        } else {
+            flash.write((index*CHUNKSIZE)+i, chunk.readblob(256));
+        }
+    }
     
     // see if we're done downloading
-    if (addr + chunk.len() >= playbackBufferLen) {
+    if ((index+1)*CHUNKSIZE >= playbackBufferLen) {
         // we're done. set the global new message flag
         // this will cause the LED to blink (in the button-poll function) as well
         newMessage = true;
@@ -511,16 +593,51 @@ agent.on("push", function(data) {
     }
 });
 
+// when agent sends a "pull" request, we respond with a "push" and a chunk of recorded audio
+agent.on("pull", function(size) {
+    // make sure the flash is awake
+    flash.wake();
+    // read a chunk from flash
+    local numChunks = (recordBufferLen / size) + 1;
+    local chunkIndex = (recordPtr / size) + 1;
+    local bytesLeft = recordBufferLen - recordPtr;
+    if (bytesLeft < size) {
+        size = bytesLeft;
+    }
+    local buffer = flash.read((46*64000)+recordPtr, size);
+    server.log(format("Buffer start: 0x %02x%02x %02x%02x",buffer.readn('b'),buffer.readn('b'),buffer.readn('b'),buffer.readn('b')));
+    // advance the pointer for the next chunk
+    recordPtr += size;
+    // send the buffer up to the agent
+    server.log(format("Device: sending chunk %d of %d, len %d",chunkIndex, numChunks, size));
+    agent.send("push", buffer);
+
+    // if we're done uploading, clean up
+    if (recordPtr >= recordBufferLen - 1) {
+        server.log("Device: Done with audio upload, clearing flash");
+        flash.eraseRecBlocks();
+        flash.sleep();
+        recordPtr = 0;
+        recordBufferLen = 0;
+        server.log("Device: ready.");
+    }
+});
+
 /* BEGIN EXECUTION -----------------------------------------------------------*/
 // instantiate class objects
 mic <- microphone();
 flash <- spiFlash(hardware.spi189, hardware.pin7);
+flash.wake();
+// make sure the flash record sectors are clear so that we're ready to record as soon as the user requests
+flash.eraseRecBlocks();
 // flash powers up in high-power standby. Put it to sleep to save power
 flash.sleep();
 
 // start polling the buttons
 pollButtons(); // 100 ms polling interval
 
+server.log("Device: ready.");
+
 // request the test audio from the agent
-server.log("Device: sending request to run playback test");
-agent.send("playtest", null);
+// server.log("Device: sending request to run playback test");
+// agent.send("playtest", null);
