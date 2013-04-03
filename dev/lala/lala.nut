@@ -30,8 +30,11 @@ imp.configure("Lala Audio Playback", [],[]);
 
 // parameters for wav file from the agent
 inParams <- {
-    // agent passes in compression settings (A_LAW_DECOMPRESS, if applicable)
-    compression = null,
+    /* agent passes in compression code from wav file:
+     0x01 = 16-bit PCM
+     0x06 = 8-bit A-law
+    */
+    compressionCode= null,
     // width parameter sets sample width character flag for blob read/write:
     //    'b' - 8 bits/sample
     //    'w' - 16 bits/sample
@@ -39,7 +42,7 @@ inParams <- {
     // sample rate in Hz
     samplerate = 16000,
     // length of actual data in data chunk
-    len = 0,
+    dataChunkSize = 0,
 }
 
 // parameters for files uploaded to agent
@@ -134,7 +137,7 @@ function bufferEmpty(buffer) {
     }
     // return the pointer to the beginning of the buffer
     buffer.seek(0,'b');
-    if (playbackPtr >= inParams.len) {
+    if (playbackPtr >= inParams.dataChunkSize) {
         server.log("Not reloading buffers; end of message");
         // we're at the end of the message buffer, so don't reload the DAC
         // the DAC will be stopped before it runs out of buffers anyway
@@ -162,9 +165,14 @@ function loadPlayback() {
     buffer3.writeblob(flash.read(playbackPtr, buffer3.len()));
     playbackPtr += buffer3.len();
     
+    local compression = 0;
+    if (inParams.compressionCode == 0x06) {
+        compression = A_LAW_DECOMPRESS;
+    }
+
     // configure the DAC
     hardware.fixedfrequencydac.configure(hardware.pin5, inParams.samplerate,
-         [buffer1,buffer2,buffer3], bufferEmpty, inParams.compression);
+         [buffer1,buffer2,buffer3], bufferEmpty, compression);
     server.log("Device: DAC configured");
 }
 
@@ -255,7 +263,7 @@ function pollButtons() {
                 server.log("Device: operation already in progress");
                 return;
             }
-            if (parameters.len > 0) {
+            if (inParams.dataChunkSize > 0) {
                 playMessage();
             }
         }
@@ -298,7 +306,7 @@ function playMessage() {
     // set the playing flag
     playing = true;
     // schedule the dac to stop running when we're done
-    imp.wakeup(((inParams.len * 1.0) / (inParams.samplerate * 1.0)), stopPlayback);
+    imp.wakeup(((inParams.dataChunkSize * 1.0) / (inParams.samplerate * 1.0)), stopPlayback);
     // enable the speaker
     hardware.pinB.write(1);
     // start the dac
@@ -571,14 +579,14 @@ agent.on("newAudio", function(parameters) {
     // set our inbound parameters to the values provided by the agent
     inParams = parameters;
 
-    server.log(format("Device: New playback buffer in agent, len: %d bytes", inParams.len));
+    server.log(format("Device: New playback buffer in agent, len: %d bytes", inParams.dataChunkSize));
     // takes length of the new playback buffer in bytes
     // we have 4MB flash - with A-law compression -> 1 byte/sample -> 4 000 000 / sampleRate seconds of audio
     // @ 16 kHz -> 250 s of audio (4.16 minutes)
     // allow 3 min for playback buffer (@16kHz -> 2 880 000 bytes)
     // allow 1 min for outgoing buffer (@16kHz -> 960 000 bytes)
-    if (inParams.len > 2880000) {
-        server.error("Device: new audio buffer length too large ("+inParams.len+" bytes, max 2880000 bytes)");
+    if (inParams.dataChunkSize > 2880000) {
+        server.error("Device: new audio buffer length too large ("+inParams.dataChunkSize+" bytes, max 2880000 bytes)");
         return 1;
     }
     // erase the message portion of the SPI flash
@@ -613,7 +621,7 @@ agent.on("push", function(data) {
     }
     
     // see if we're done downloading
-    if ((index+1)*CHUNKSIZE >= inParams.len) {
+    if ((index+1)*CHUNKSIZE >= inParams.dataChunkSize) {
         // we're done. set the global new message flag
         // this will cause the LED to blink (in the button-poll function) as well
         newMessage = true;
