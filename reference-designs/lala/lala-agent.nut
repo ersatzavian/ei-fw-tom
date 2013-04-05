@@ -340,5 +340,5 @@ http.onrequest(function(request, res) {
 
 /* EXECUTION BEGINS HERE ----------------------------------------------------*/
 
-server.log("Lala wav playback agent running");
+server.log("Lala agent running");
 server.log("Agent: free memory: "+imp.getmemoryfree());
