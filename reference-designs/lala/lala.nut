@@ -183,11 +183,11 @@ function loadPlayback() {
     }
 
     // configure the DAC
-    hardware.fixedfrequencydac.configure(hardware.pin5, inParams.samplerate,
+    hardware.fixedfrequencydac.configure( hardware.pin5, inParams.samplerate,
          [flash.read(0, CHUNKSIZE),
             flash.read(CHUNKSIZE, CHUNKSIZE),
             flash.read((2*CHUNKSIZE), CHUNKSIZE)],
-         playbackBufferEmpty, compression);
+         playbackBufferEmpty, compression );
 
     server.log("Device: DAC configured");
 }
@@ -282,10 +282,14 @@ function recordMessage() {
 
     // configure the sampler
 
-    hardware.sampler.configure(hardware.pin2, outParams.samplerate, [blob(CHUNKSIZE),blob(CHUNKSIZE),blob(CHUNKSIZE)], 
+    hardware.sampler.configure(hardware.pin2, outParams.samplerate, 
+        [blob(CHUNKSIZE),
+            blob(CHUNKSIZE),
+            blob(CHUNKSIZE)], 
         samplesReady, outParams.compression);
 
     // schedule the sampler to stop running at our max record time
+    // if the sampler has already stopped, this does nothing
     imp.wakeup(30.0, stopSampler);
 
     // start the sampler
@@ -314,6 +318,14 @@ function playMessage() {
     // start the dac
     server.log("Device: starting the DAC");
     hardware.fixedfrequencydac.start();
+}
+
+function checkBattery() {
+    imp.wakeup((5*60), checkBattery);     // check every 5 minutes
+    mic.enable();
+    imp.sleep(0.01);
+    local Vbatt = (hardware.pinA.read()/65535.0) * hardware.voltage() * (6.9/2.2);
+    server.log(format("Battery Voltage %.2f V",Vbatt));
 }
 
 /* CLASS DEFINITIONS ---------------------------------------------------------*/
@@ -668,5 +680,8 @@ flash.sleep();
 
 // start polling the buttons
 pollButtons(); // 100 ms polling interval
+
+// check the battery voltage
+checkBattery();
 
 server.log("Device: ready.");
