@@ -16,7 +16,7 @@ const CHUNKSIZE = 4096;
 imp.setpowersave(true);
 
 // register with the imp service
-imp.configure("Lala Audio Playback", [],[]);
+imp.configure("Lala Audio Impee", [],[]);
 
 /* GLOBAL PARAMETERS AND FLAGS ----------------------------------------------*/
 
@@ -95,7 +95,6 @@ function samplesReady(buffer, length) {
         recordPtr += length;
     } else {
         server.log("Device: Sampler Buffer Overrun");
-        return;
     }
 }
 

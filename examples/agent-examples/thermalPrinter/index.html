@@ -34,6 +34,9 @@
 
 				<h2>Electric Imp Printer</h2>
 
+				<!-- Picture of the imp printer goes here -->
+				<img src="./imPrinter.jpg" width=300 height=265 alt="the imPrinter">
+
 				<!-- print success / failure indicator goes here -->
 				<span id="printSuccess" style="padding-top: 20px; display: none;"><div class="alert alert-success"><h4>Success!</h4> Your message was printed</div></span>
 				<span id="printFail" style="padding-top: 20 px; display: none;"><div class="alert alert-error"><h4>Whoops!</h4> Something went wrong printing your message</div></span>
@@ -53,6 +56,9 @@
 						    <a class="btn btn-bar btn-inverse" href="#" onClick="toggleInv()">inverse</a>
 						    <a class="btn btn-bar" href="#" onClick="toggleUpdown()">upside-down</a>
 						</div>
+						<div class="btn-group" data-toggle="button">
+						    <a class="btn btn-bar" href="#" onClick="printLogo()"><i class="icon-camera"></i></a>
+						</div>
 					</div>
 					<!-- Here is where you actually type your message and hit print -->
 					<p><input class="input-xxlarge" id="typer" name="message" type=text placeholder="Your message here..." maxsize=400></p>
@@ -61,7 +67,7 @@
 			</div>
 		</div>
 
-		<script src="../bootstrap/js/bootstrap.min.js"></script>
+		<script src="../bootstrap/js/bootstrap.js"></script>
 		<script> 
 			// this nice little table holds all of the data we pass to the
 			// electric imp agent when we ask it to print
@@ -116,6 +122,20 @@
 					document.getElementById('printSuccess').style.display = "none";
 					document.getElementById('printFail').style.display = "block";
 				}
+			}
+
+			function printLogo() {
+				if (window.XMLHttpRequest) {
+					request=new XMLHttpRequest();
+				} else {
+					// in case you're on internet explorer...
+					request=new ActiveXObject("Microsoft.XMLHTTP");
+				}
+				// print the imp logo by sending a generic request to /logo
+				request.open("GET", impURL+"/logo", false);
+				// make JSON from the settings table
+				request.send(json);
+				console.log("Sent logo request to imp");
 			}
 
 			// A handy JS implementation of PHP's "wordwrap" function
