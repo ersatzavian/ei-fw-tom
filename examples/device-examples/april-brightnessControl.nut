@@ -45,14 +45,18 @@ function checkPot() {
         local potValue = rawValue / 65535.0;
         lastRawValue = rawValue;
         // note that we divide by 65535.0 to get a value between 0.0 and 1.0
+        // show the value on the planner
         server.show(potValue);
+        // write the value to the logs
+        server.log(potValue);
+        // set the output port equal to the new value
         out_pot.set(potValue);
     }
     
     // schedule us to wake up and run this function again.
     // first parameter: time in seconds til next wakeup. Use a floating-point number (i.e. "1.0")
     // second parameter: name of the function to run when we wake back up
-    imp.wakeup(0.01, checkPot);
+    imp.wakeup(0.1, checkPot);
 }
 
 class ledBrightness extends InputPort
@@ -61,6 +65,7 @@ class ledBrightness extends InputPort
     type = "number"
     
     function set(value) {
+        server.log("Got new value: "+value);
         // since pin 9 is configured for PWM, we can set the duty cycle with pin.write()
         // write a floating point number between 0.0 and 1.0, where 1.0 = 100% duty cycle
         hardware.pin9.write(1.0-value);
@@ -79,5 +84,3 @@ imp.configure("April Brightness Controller", [ ledBrightness() ], [out_pot]);
 // note that at the end of checkPot, we use imp.wakeup to schedule the next run of the checkSwitch function
 // this is a common structure in imp software - set up a function to periodically take care of business, and have it schedule its own next run
 checkPot();
-
-//EOF
