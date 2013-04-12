@@ -1,0 +1,30 @@
+function poll() {
+    server.log("Long polling");
+    local req = http.get("http://demo2.electricimp.com:3077/");
+    req.sendasync(handleResponse);
+}
+
+function handleResponse(res) {
+    server.log(res.body);
+    server.log(res.statuscode);
+    if(res.statuscode == 200) {
+        local body = http.jsondecode(res.body);
+        local follower_count = body.followers;
+        if(follower_count == 0) { follower_count = 1}; // math lol
+        local seconds = 0.1+math.log(follower_count)*0.2;
+        server.log(seconds);
+        device.send("dispense", seconds);
+    
+        poll();
+    } else {
+        imp.wakeup(0.2, poll);
+    }
+}
+
+poll();
+
+/*
+http.onrequest(function(req, res) {
+
+});
+*/
