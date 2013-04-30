@@ -11,6 +11,9 @@
 
 /* GLOBAL PARAMETERS AND FLAGS ----------------------------------------------*/
 
+// size of chunks to pull from device when fetching new recorded message
+const CHUNKSIZE = 8192;
+
 // parameters read from WAV headers on inbound files
 inParams <- {
     fmtChunkOffset = null,
@@ -49,49 +52,50 @@ outParams <- {
 wavBlob <- blob(50000);
 // new message flag so that we can respond appropriately when polled
 newMessage <- false;
-
-// size of chunks to pull from device when fetching new recorded message
-CHUNKSIZE <- 8192;
+// pointer to mark position while downloading audio files
+downloadPtr <- 0;
+// url to fetch file from while sending down to imp
+downloadURL <- "";
 
 /* GENERAL FUNCTIONS --------------------------------------------------------*/
 
-// find a string in our "wavBlob" buffer
-function wavBlobFind(str) {
-    //sserver.log("Searching for \""+str+"\" in blob");
-    if (wavBlob.len() < str.len()) {
-        server.log("Blob too short! ("+wavBlob.len()+" bytes)");
-        server.log("Short object was of type "+typeof(wavBlob));
-        return -1;
+// clean up global parameters after downloading a new message to the device
+function resetAfterDownload() {
+    server.log("Agent: file downloaded to imp, resetting pointers.");
+    downloadURL = "";
+    downloadPtr = 0;
+    inParams.fmtChunkOffset = null;
+    inParams.fmtChunkDataSize = null;
+    inParams.dataChunkOffset = null;
+    inParams.dataChunkSize = null;
+    inParams.compressionCode = null;
+    inParams.width = null;
+    inParams.channels = null;
+    inParams.samplerate = null;
+    inParams.avgBytesPerSec = null;
+    inParams.blockAlign = null;
+    inParams.sigBits = null;
+}
+
+// a bad, hacky function to copy a string into a blob. Used only shamefully.
+function copyToBlob(str) {
+    local myBlob = blob(str.len());
+    for(local i = 0; i < str.len(); i++) {
+        //server.log(format("0x%02x",str[i]));
+        myBlob.writen(str[i],'b');
     }
-    local startPos = wavBlob.tell();
-    wavBlob.seek(0,'b');
-    local testString = "";
-    for (local i = 0; i < str.len(); i++) {
-        testString += format("%c",wavBlob.readn('b'));
-    }
-    while ((testString != str) && (wavBlob.tell() < (wavBlob.len() - str.len()))) {
-        //server.log(testString);
-        testString = testString.slice(1);
-        testString += format("%c",wavBlob.readn('b'));
-    }
-    if (testString != str) {
-        // failed to find it
-        return -1;
-    }
-    // found it, return its position
-    local pos = wavBlob.tell() - str.len();
-    // restore the blob handle before returning
-    wavBlob.seek(startPos, 'b');
-    return pos;
+    myBlob.seek(0,'b');
+    return myBlob;
 }
 
 // parse the format chunk header on an inbound wav file 
-function getFormatData() {
-    local startPos = wavBlob.tell();
-    wavBlob.seek(inParams.fmtChunkOffset+4,'b');
+function parseFmtChunk(chunk) {
+    server.log("Parsing format data");
+    chunk.seek(4,'b');
 
-    inParams.fmtChunkDataSize = wavBlob.readn('i');
-    inParams.compressionCode = wavBlob.readn('w');
+    inParams.fmtChunkDataSize = chunk.readn('i');
+    server.log("Format chunk is "+inParams.fmtChunkDataSize+" bytes");
+    inParams.compressionCode = chunk.readn('w');
     if (inParams.compressionCode == 0x01) {
         // 16-bit PCM
         inParams.width = 'w';
@@ -103,18 +107,15 @@ function getFormatData() {
             inParams.compressionCode));
         return 1;
     }
-    inParams.channels = wavBlob.readn('w');
-    inParams.samplerate = wavBlob.readn('i');
-    inParams.avgBytesPerSec = wavBlob.readn('i');
-    inParams.blockAlign = wavBlob.readn('w');
-    inParams.sigBits = wavBlob.readn('w');
+    inParams.channels = chunk.readn('w');
+    inParams.samplerate = chunk.readn('i');
+    inParams.avgBytesPerSec = chunk.readn('i');
+    inParams.blockAlign = chunk.readn('w');
+    inParams.sigBits = chunk.readn('w');
 
     server.log(format("Compression Code: %x", inParams.compressionCode));
     server.log(format("Channels: %d",inParams.channels));
     server.log(format("Sample rate: %d", inParams.samplerate));
-
-    // return the file pointer
-    wavBlob.seek(startPos, 'b');
 
     return 0;
 }
@@ -204,11 +205,10 @@ function writeChunkHeaders() {
 
 function fetch(url) {
     offset <- 0;
-    const LUMP = 4096;
     server.log("Fetching content from "+url);
     do {
         response <- http.get(url, 
-            {Range=format("bytes=%u-%u", offset, offset+LUMP-1) }
+            {Range=format("bytes=%u-%u", offset, offset+CHUNKSIZE-1) }
         ).sendsync();
         got <- response.body.len();
         
@@ -217,19 +217,38 @@ function fetch(url) {
         */
         local fmtOffset = response.body.find("fmt ");
         if (fmtOffset) {
-            parameters.fmtChunkOffset = fmtOffset + offset;
-            server.log("Located format chunk at offset "+parameters.fmtChunkOffset);
+            inParams.fmtChunkOffset = fmtOffset + offset;
+            server.log("Located format chunk at offset "+inParams.fmtChunkOffset);
+            server.log("Fetching complete format chunk");
+            local fmtChunk = http.get(url, 
+                {Range=format("bytes=%u-%u", fmtOffset, fmtOffset+25)}).sendsync().body;
+            parseFmtChunk(copyToBlob(fmtChunk));
         }
         local dataOffset = response.body.find("data");
         if (dataOffset) {
-            parameters.dataChunkOffset = dataOffset + offset;
-            server.log("Located data chunk at offset "+parameters.dataChunkOffset);
-        }
-        
+            inParams.dataChunkOffset = dataOffset + offset;
+            server.log("Located data chunk at offset "+inParams.dataChunkOffset);
+            if ((dataOffset + 8) > got) {
+                local dataHeader = http.get(url,
+                    {Range=format("bytes=%u-%u", dataOffset, dataOffset+8)}).sendsync().body;
+                inParams.dataChunkSize = ((response.body[7] << 24) | (response.body[6] << 16) | (response.body[5] << 8) | response.body[4]);
+            } else {
+                local dataHeader = response.body.slice(dataOffset, dataOffset+8);
+                inParams.dataChunkSize = ((dataHeader[7] << 24) | (dataHeader[6] << 16) | (dataHeader[5] << 8) | dataHeader[4]);
+            }
+            server.log("Agent: Data Chunk of length "+inParams.dataChunkSize+" bytes");
+        }  
         offset += got;
-        addToBlob(response.body);
-        //server.log(format("Downloading (%d bytes)",offset));
-    } while (response.statuscode == 206 && got == LUMP);
+    } while (response.statuscode == 206 && inParams.dataChunkSize == 0);
+
+    if (inParams.dataChunkSize == 0) {
+        server.log("Agent: failed to parse wav file headers");
+        return 1;
+    } else {
+        downloadPtr = inParams.dataChunkOffset + 8;
+        downloadURL = url;
+        device.send("newAudio", inParams);
+    }
     
     server.log("Done, got "+offset+" bytes total");
 }
@@ -239,14 +258,17 @@ function fetch(url) {
 // Serve up a chunk of audio data from an inbound wav file when the device signals it is ready to download a chunk
 device.on("pull", function(size) {
     local buffer = blob(size);
+    local dlchunk = copyToBlob(http.get(downloadURL,{Range=format("bytes=%u-%u", downloadPtr, downloadPtr+size-1)}).sendsync().body);
+    server.log("Fetched chunk of size "+dlchunk.len());
+
     // make a "sequence number" out of our position in audioData
-    local chunkIndex = ((wavBlob.tell()-inParams.dataChunkOffset) / size)+1;
+    local chunkIndex = ((downloadPtr - inParams.dataChunkOffset) / size)+1;
     server.log("Agent: sending chunk "+chunkIndex+" of "+(inParams.dataChunkSize/size));
     
     // wav data is interlaced
     // skip channels if there are more than one; we'll always take the first
     local max = size;
-    local bytesLeft = (inParams.dataChunkSize - (wavBlob.tell() - inParams.dataChunkOffset + 8)) / inParams.channels;
+    local bytesLeft = (inParams.dataChunkSize - (downloadPtr - inParams.dataChunkOffset + 8)) / inParams.channels;
     if (inParams.width == 'w') {
         // if we're A-law encoded, it's 1 byte per sample; if we're 16-bit PCM, it's two
         bytesLeft = bytesLeft * 2;
@@ -258,8 +280,9 @@ device.on("pull", function(size) {
     // grab only the first channel if this is a multi-channel file
     // sending single-channel files is recommended as the agent's memory is constrained
     for (local i = 0; i < max; i += inParams.channels) {
-        buffer.writen(wavBlob.readn(inParams.width), inParams.width);
-    } 
+        buffer.writen(dlchunk.readn(inParams.width), inParams.width);
+    }
+    //server.log(format("Wrote %d bytes to device", buffer.tell())); 
 
     // pack up the sequence number and the buffer in a table
     local data = {
@@ -269,6 +292,12 @@ device.on("pull", function(size) {
     
     // send the data out to the device
     device.send("push", data);
+
+    downloadPtr += size;
+    //server.log(format("Download pointer at %d of %d", downloadPtr, (inParams.dataChunkSize + inParams.dataChunkOffset)));
+    if (downloadPtr >= (inParams.dataChunkSize + inParams.dataChunkOffset)) {
+        resetAfterDownload();
+    } 
 });
 
 // hook for the device to start uploading a new message 
@@ -327,57 +356,21 @@ http.onrequest(function(request, res) {
             res.send(204, "No new messages");
         }
     } else if (request.path == "/newmsg") {
-        // this path is used to post a new message
-        server.log("Agent: got a new message");
-        server.log("Agent: wavBlob length = "+wavBlob.len()+" bytes");
-        wavBlob = http.base64decode(request.body);
-        res.send(200, "OK");
-        // base64decode returns a blob, so we need to search the blob for chunk header offsets
-        server.log("Agent: encoded message length = "+request.body.len()+" bytes");
-        server.log("Agent: decoded message length = "+wavBlob.len()+" bytes");
-        inParams.fmtChunkOffset = wavBlobFind("fmt ");
-        if (inParams.fmtChunkOffset < 0) {
-            server.log("Agent: Failed to find format chunk in new message");
-            return 1;
-        }
-        server.log("Located format chunk at offset "+inParams.fmtChunkOffset);
-        inParams.dataChunkOffset = wavBlobFind("data");
-        if (inParams.dataChunkOffset < 0) {
-            server.log("Agent: Failed to find data chunk in new message");
-            return 1;
-        }
-        server.log("Located data chunk at offset "+inParams.dataChunkOffset);
-
-        // blob to hold audio data exists at global scope
-        wavBlob.seek(0,'b');
-    
-        // read in the vital parameters from the file's chunk headers
-        if (getFormatData()) {
-            server.log("Agent: failed to get audio format data for file");
-            return 1;
-        }
-    
-        // seek to the beginning of the audio data chunk
-        wavBlob.seek(inParams.dataChunkOffset+4,'b');
-        inParams.dataChunkSize = wavBlob.readn('i');
-        server.log(format("Agent: at beginning of audio data chunk, length %d", inParams.dataChunkSize));
-
-        // Notifty the device we have audio waiting, and wait for a pull request to serve up data
-        device.send("newAudio", inParams);
-    } else if (request.path == "/fetch") {
         local fetchURL = request.body;
         server.log("Agent: requested to fetch a new message from "+fetchURL);
         res.send(200, "OK");
+        //try {
+            fetch(fetchURL);
+        //} catch (err) {
+        //    server.log("Agent: failed to fetch new message");
+        //    return 1;
+        //}
+        server.log("Agent: done fetching message");
+        // Notify the device we have audio waiting, and wait for a pull request to serve up data
+        // device.send("newAudio", inParams);
     } else {
         // send a generic response to prevent browser hang
         res.send(200, "OK");
-        try {
-            fetch(fetchURL);
-        } catch {
-            server.log("Agent: failed to fetch new message");
-            return 1;
-        }
-        server.log("Agent: done fetching message");
     }
 });
 

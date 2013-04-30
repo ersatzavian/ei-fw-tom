@@ -1,4 +1,5 @@
 /* Lala Audio Impee
+   Sends record buffers to agent without caching in flash
 
  Tom Buttner, April 2013
  Electric Imp, inc
@@ -28,7 +29,7 @@ outParams <- {
     compression = A_LAW_COMPRESS | NORMALISE,
     width = 'b',
     samplerate = 16000,
-    len = 0,
+    len = 480000,
 }
 
 // pointers and flags for playback and recording
@@ -90,9 +91,10 @@ hardware.spi189.configure(CLOCK_IDLE_LOW | MSB_FIRST, 15000);
 // callback and buffers for the sampler
 function samplesReady(buffer, length) {
     if (length > 0) {
-        flash.writeChunk((flash.recordOffset+recordPtr), buffer);
+        // flash.writeChunk((flash.recordOffset+recordPtr), buffer);
         // advance the record pointer
-        recordPtr += length;
+        // recordPtr += length;
+        agent.send("push", buffer);
     } else {
         server.log("Device: Sampler Buffer Overrun");
     }
@@ -104,13 +106,13 @@ function finishRecording() {
     server.log("Device: free memory: "+imp.getmemoryfree());
     
     // put the flash to sleep to save power
-    flash.sleep();
+    //flash.sleep();
     
     // remember how long the recorded buffer is
-    outParams.len = recordPtr;
+    //outParams.len = recordPtr;
     
     // reset the record pointer; we'll use it to walk through flash and upload the message to the agent
-    recordPtr = 0;
+    //recordPtr = 0;
 
     // turn off powersave to reduce latency while uploading to the agent
     imp.setpowersave(false);
@@ -120,7 +122,7 @@ function finishRecording() {
         samplesReady, outParams.compression);
 
     // signal to the agent that we're ready to upload this new message
-    agent.send("newMessage", outParams);
+    //agent.send("newMessage", outParams);
     // the agent will call back with a "pull" request, at which point we'll read the buffer out of flash and upload
 }
 
@@ -245,7 +247,7 @@ function pollButtons() {
         } else {
             // stop recording on button release
             if (recording) {
-                stopSampler();
+                //stopSampler();
             }
         }
     }
@@ -273,7 +275,7 @@ function recordMessage() {
     recordPtr = 0;
 
     // wake up the flash
-    flash.wake();
+    //flash.wake();
 
     // we erase pages at startup and after upload, so we don't need to do so again here
     // enable the microphone preamp
@@ -294,6 +296,8 @@ function recordMessage() {
     // start the sampler
     server.log("Device: recording to flash");
     hardware.sampler.start();
+
+    agent.send("newMessage", outParams);
 }
 
 function playMessage() {
@@ -637,8 +641,9 @@ agent.on("push", function(data) {
 
 // when agent sends a "pull" request, we respond with a "push" and a chunk of recorded audio
 agent.on("pull", function(size) {
+    /*
     // make sure the flash is awake
-    flash.wake();
+    // flash.wake();
     // read a chunk from flash
     local numChunks = (outParams.len / size) + 1;
     local chunkIndex = (recordPtr / size) + 1;
@@ -663,6 +668,7 @@ agent.on("pull", function(size) {
         imp.setpowersave(true);
         server.log("Device: ready.");
     }
+    */
 });
 
 /* BEGIN EXECUTION -----------------------------------------------------------*/
@@ -671,9 +677,9 @@ mic <- microphone();
 // flash constructor takes pre-configured spi bus and cs_l pin
 flash <- spiFlash(hardware.spi189, hardware.pin7);
 // in case this is software reload and not a full power-down reset, make sure the flash is awake
-flash.wake();
+//flash.wake();
 // make sure the flash record sectors are clear so that we're ready to record as soon as the user requests
-flash.eraseRecBlocks();
+//flash.eraseRecBlocks();
 // flash initialized; put it to sleep to save power
 flash.sleep();
 
