@@ -359,12 +359,12 @@ http.onrequest(function(request, res) {
         local fetchURL = request.body;
         server.log("Agent: requested to fetch a new message from "+fetchURL);
         res.send(200, "OK");
-        //try {
+        try {
             fetch(fetchURL);
-        //} catch (err) {
-        //    server.log("Agent: failed to fetch new message");
-        //    return 1;
-        //}
+        } catch (err) {
+            server.log("Agent: failed to fetch new message");
+            return 1;
+        }
         server.log("Agent: done fetching message");
         // Notify the device we have audio waiting, and wait for a pull request to serve up data
         // device.send("newAudio", inParams);
