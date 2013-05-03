@@ -373,7 +373,7 @@ http.onrequest(function(request, res) {
         res.send(200, "OK");
         try {
             fetch(fetchURL);
-        } catch {
+        } catch (err) {
             server.log("Agent: failed to fetch new message");
             return 1;
         }
