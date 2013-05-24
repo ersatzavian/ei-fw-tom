@@ -1,6 +1,6 @@
 /* Lala Audio Impee
 
- Tom Buttner, May 2013
+ Tom Buttner, April 2013
  Electric Imp, inc
  tom@electricimp.com
 */
@@ -15,6 +15,10 @@ const CHUNKSIZE = 4096;
 // note that this increases network latency by up to 300 ms
 imp.setpowersave(true);
 
+recPin <- hardware.pin2;
+const RECTIMEOUT = 5.0;
+const SPISPEED = 15000;
+
 // register with the imp service
 imp.configure("Lala Audio Impee", [],[]);
 
@@ -23,9 +27,21 @@ imp.configure("Lala Audio Impee", [],[]);
 // parameters for wav file are passed in from the agent
 inParams <- {};
 
+// parameters for files uploaded to agent
+outParams <- {
+    compression = A_LAW_COMPRESS | NORMALISE,
+    //compression = NORMALISE,
+    width = 'b',
+    //width = 'w',
+    samplerate = 16000,
+    len = 0,
+}
+
 // pointers and flags for playback and recording
 playbackPtr <- 0;
 playing <- false;
+recordPtr <- 0;
+recording <- false;
 
 // flag for new message downloaded from the agent
 newMessage <- false;
@@ -33,24 +49,106 @@ newMessage <- false;
 /* PIN CONFIGURATION AND ALIASING -------------------------------------------*/
 /*
  Pinout:
- 1 = SPI CLK
+ 1 = Wake / SPI CLK
+ 2 = Sampler (Audio In)
  5 = DAC (Audio Out)
+ 6 = Button 1
  7 = SPI CS_L
  8 = SPI MOSI
  9 = SPI MISO
+ A = Battery Check (ADC) (Enabled on Mic Enable)
+ B = Speaker Enable
+ C = Mic Enable
+ D = User LED
+ E = Button 2
 */
+// buttons
+button1 <- hardware.pin6;
+button1.configure(DIGITAL_IN);
+button2 <- hardware.pinE;
+button2.configure(DIGITAL_IN);
 
 // SPI CS_L
 hardware.pin7.configure(DIGITAL_OUT);
 
-// configure spi bus for spi flash
-hardware.spi189.configure(CLOCK_IDLE_LOW | MSB_FIRST, 15000);
+// Battery Check
+hardware.pinA.configure(ANALOG_IN);
 
-// pin C makes the chimp clap
-chimp <- hardware.pinC;
+// speaker enable
+speakerEnable <- hardware.pinB;
+speakerEnable.configure(DIGITAL_OUT);
+speakerEnable.write(0);
+
+// mic enable
+hardware.pinC.configure(DIGITAL_OUT);
 hardware.pinC.write(0);
 
+// user LED driver
+led <- hardware.pinD;
+led.configure(DIGITAL_OUT);
+led.write(0);
+
+// configure spi bus for spi flash
+local speed = hardware.spi189.configure(CLOCK_IDLE_LOW | MSB_FIRST, SPISPEED);
+server.log("SPI running at "+speed);
+
 /* SAMPLER AND FIXED-FREQUENCY DAC -------------------------------------------*/
+
+// callback and buffers for the sampler
+function samplesReady(buffer, length) {
+    if (length > 0) {
+        flash.writeChunk((flash.recordOffset+recordPtr), buffer);
+        // advance the record pointer
+        recordPtr += length;
+    } else {
+        server.log("Device: Sampler Buffer Overrun");
+    }
+}
+
+// clean up after stopping the sampler
+function finishRecording() {
+    server.log("Device: done recording, stopping.");
+    server.log("Device: free memory: "+imp.getmemoryfree());
+    
+    // put the flash to sleep to save power
+    flash.sleep();
+    
+    // remember how long the recorded buffer is
+    outParams.len = recordPtr;
+    
+    // reset the record pointer; we'll use it to walk through flash and upload the message to the agent
+    recordPtr = 0;
+
+    // turn off powersave to reduce latency while uploading to the agent
+    imp.setpowersave(false);
+
+    // reconfigure the sampler to free the memory allocated for sampler buffers
+    hardware.sampler.configure(recPin, outParams.samplerate, [blob(2),blob(2),blob(2)], 
+        samplesReady, outParams.compression);
+
+    // signal to the agent that we're ready to upload this new message
+    agent.send("newMessage", outParams);
+    // the agent will call back with a "pull" request, at which point we'll read the buffer out of flash and upload
+}
+
+function stopSampler() {
+    if (recording) {
+        server.log("Device: Stopping Sampler");
+        // stop the sampler
+        hardware.sampler.stop();
+
+        // the sampler will immediately call samplesReady to empty its last buffer
+        // following samplesReady, the imp will idle, and finishRecording will be called
+        imp.onidle(finishRecording);
+
+        // clear the recording flag
+        recording = false;
+
+        // we erase pages at startup and after upload, so we don't need to do so again here
+        // disable the microphone preamp
+        mic.disable();
+    }   
+}
 
 // callback for the fixed-frequency DAC
 function playbackBufferEmpty(buffer) {
@@ -115,6 +213,95 @@ function stopPlayback() {
 }
 
 /* GLOBAL FUNCTIONS ----------------------------------------------------------*/
+lastState1 <- 1;
+lastState2 <- 1;
+blinkCntr <- 0;
+function pollButtons() {
+    imp.wakeup(0.1, pollButtons);
+    // manage LED blink here
+    if (newMessage) {
+        // turn LED for 200 ms out of every 2 seconds
+        if (blinkCntr == 18) {
+            led.write(1);
+        } else if (blinkCntr == 20) {
+            led.write(0);
+        }
+    } else if (recording) {
+        // let the LED stay on if we're recording
+        led.write(1);
+    } else {
+        // make sure the LED is off
+        led.write(0);
+    }
+    if (blinkCntr > 19) {
+        //server.log("Device: free memory: "+imp.getmemoryfree());
+        blinkCntr = 0;
+    }
+    blinkCntr++;
+    // now handle the buttons
+    local state1 = button1.read();
+    local state2 = button2.read();
+    if (state1 != lastState1) {
+        lastState1 = state1;
+        if (!lastState1) {
+            if (recording || playing) {
+                server.log("Device: operation already in progress");
+                return;
+            }
+            recordMessage();
+        } else {
+            // stop recording on button release
+            if (recording) {
+                stopSampler();
+            }
+        }
+    }
+    if (state2 != lastState2) {
+        lastState2 = state2;
+        if (!lastState2) {
+            if (recording || playing) {
+                server.log("Device: operation already in progress");
+                return;
+            }
+            if (inParams.dataChunkSize) {
+                playMessage();
+            }
+        }
+    }
+}
+
+function recordMessage() {
+    server.log("Device: recording message to flash");
+
+    // set the recording flag
+    recording = true;
+
+    // set the record pointer to zero; this points filled buffers to the proper area in flash
+    recordPtr = 0;
+
+    // wake up the flash
+    flash.wake();
+
+    // we erase pages at startup and after upload, so we don't need to do so again here
+    // enable the microphone preamp
+    mic.enable();
+
+    // configure the sampler
+
+    hardware.sampler.configure(recPin, outParams.samplerate, 
+        [blob(CHUNKSIZE),
+            blob(CHUNKSIZE),
+            blob(CHUNKSIZE)], 
+        samplesReady, outParams.compression);
+
+    // schedule the sampler to stop running at our max record time
+    // if the sampler has already stopped, this does nothing
+    imp.wakeup(RECTIMEOUT, stopSampler);
+
+    // start the sampler
+    server.log("Device: recording to flash");
+    hardware.sampler.start();
+}
 
 function playMessage() {
     server.log("Device: playing back stored message from flash");
@@ -139,7 +326,28 @@ function playMessage() {
     hardware.fixedfrequencydac.start();
 }
 
+function checkBattery() {
+    imp.wakeup((5*60), checkBattery);     // check every 5 minutes
+    mic.enable();
+    imp.sleep(0.01);
+    local Vbatt = (hardware.pinA.read()/65535.0) * hardware.voltage() * (6.9/2.2);
+    server.log(format("Battery Voltage %.2f V",Vbatt));
+}
+
 /* CLASS DEFINITIONS ---------------------------------------------------------*/
+class microphone {
+    function enable() {
+        hardware.pinC.write(1);
+        // wait for the LDO to stabilize
+        imp.sleep(0.05);
+        server.log("Microphone Enabled");
+    }
+
+    function disable() {
+        hardware.pinC.write(0);
+        server.log("Microphone Disabled");
+    }
+}
 
 class spiFlash {
     // MX25L3206E SPI Flash
@@ -172,7 +380,7 @@ class spiFlash {
     // blocks 49 - 64: recording memory
     static totalBlocks = 64;
     static playbackBlocks = 48;
-    static recordOffset = 0x2EE000;
+    static recordOffset = 0x2FFFD0;
     
     // manufacturer and device ID codes
     mfgID = null;
@@ -242,10 +450,11 @@ class spiFlash {
 
     // allow data chunks greater than one flash page to be written in a single op
     function writeChunk(addr, data) {
+        server.log(format("Writing %d bytes to 0x%06x",data.len(),addr));
         // separate the chunk into pages
         data.seek(0,'b');
         for (local i = 0; i < data.len(); i+=256) {
-            local leftInBuffer = data.len() - data.tell() - 1;
+            local leftInBuffer = data.len() - data.tell();
             if (leftInBuffer < 256) {
                 flash.write((addr+i),data.readblob(leftInBuffer));
             } else {
@@ -259,7 +468,8 @@ class spiFlash {
         // to read, send the read command and a 24-bit address
         spi.write(READ);
         spi.write(format("%c%c%c", (addr >> 16) & 0xFF, (addr >> 8) & 0xFF, addr & 0xFF));
-        local readBlob = spi.readblob(bytes);        
+        local readBlob = spi.readblob(bytes);
+        server.log(format("Read blob from flash, starts with 0x %02x, ends with 0x %02x",readBlob[0],readBlob[bytes-1]));        
         cs_l.write(1);
         return readBlob;
     }
@@ -353,9 +563,9 @@ class spiFlash {
     function erasePlayBlocks() {
         server.log("Device: clearing playback flash sectors");
         for(local i = 0; i < this.playbackBlocks; i++) {
-            if(this.blockErase(i*64000)) {
+            if(this.blockErase(i*65535)) {
                 server.error(format("Device: SPI flash failed to erase block %d (addr 0x%06x)",
-                    i, i*64000));
+                    i, i*65535));
                 return 1;
             }
         }
@@ -367,9 +577,9 @@ class spiFlash {
     function eraseRecBlocks() {
         server.log("Device: clearing recording flash sectors");
         for (local i = this.playbackBlocks; i < this.totalBlocks; i++) {
-            if(this.blockErase(i*64000)) {
+            if(this.blockErase(i*65535)) {
                 server.error(format("Device: SPI flash failed to erase block %d (addr 0x%06x)",
-                    i, i*64000));
+                    i, i*65535));
                 return 1;
             }
         }
@@ -464,21 +674,25 @@ agent.on("pull", function(size) {
     }
 });
 
-// allow agent to start and stop the chimp
-agent.on("chimp", function(value)) {
-    if (value) {
-        chimp.write(1);
-    } else {
-        chimp.write(0);
-    }
-}
-
 /* BEGIN EXECUTION -----------------------------------------------------------*/
+// instantiate class objects
+mic <- microphone();
 // flash constructor takes pre-configured spi bus and cs_l pin
 flash <- spiFlash(hardware.spi189, hardware.pin7);
 // in case this is software reload and not a full power-down reset, make sure the flash is awake
 flash.wake();
+// make sure the flash record sectors are clear so that we're ready to record as soon as the user requests
+flash.eraseRecBlocks();
 // flash initialized; put it to sleep to save power
 flash.sleep();
 
+// start polling the buttons
+pollButtons(); // 100 ms polling interval
+
+// check the battery voltage
+checkBattery();
+
+server.log("Device ID: "+hardware.getimpeeid());
 server.log("Device: ready.");
+
+recordMessage();

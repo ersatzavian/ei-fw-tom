@@ -373,7 +373,7 @@ class spiFlash {
     // blocks 49 - 64: recording memory
     static totalBlocks = 64;
     static playbackBlocks = 48;
-    static recordOffset = 0x2EE000;
+    static recordOffset = 0x2FFFD0;
     
     // manufacturer and device ID codes
     mfgID = null;
@@ -446,7 +446,7 @@ class spiFlash {
         // separate the chunk into pages
         data.seek(0,'b');
         for (local i = 0; i < data.len(); i+=256) {
-            local leftInBuffer = data.len() - data.tell() - 1;
+            local leftInBuffer = data.len() - data.tell();
             if (leftInBuffer < 256) {
                 flash.write((addr+i),data.readblob(leftInBuffer));
             } else {
@@ -554,9 +554,9 @@ class spiFlash {
     function erasePlayBlocks() {
         server.log("Device: clearing playback flash sectors");
         for(local i = 0; i < this.playbackBlocks; i++) {
-            if(this.blockErase(i*64000)) {
+            if(this.blockErase(i*65535)) {
                 server.error(format("Device: SPI flash failed to erase block %d (addr 0x%06x)",
-                    i, i*64000));
+                    i, i*65535));
                 return 1;
             }
         }
@@ -568,9 +568,9 @@ class spiFlash {
     function eraseRecBlocks() {
         server.log("Device: clearing recording flash sectors");
         for (local i = this.playbackBlocks; i < this.totalBlocks; i++) {
-            if(this.blockErase(i*64000)) {
+            if(this.blockErase(i*65535)) {
                 server.error(format("Device: SPI flash failed to erase block %d (addr 0x%06x)",
-                    i, i*64000));
+                    i, i*65535));
                 return 1;
             }
         }
