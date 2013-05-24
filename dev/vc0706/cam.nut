@@ -10,40 +10,72 @@
 const CHUNK_SIZE = 8192;
 
 // register with imp service
-imp.configure("RS Camera",[],[]);
+imp.configure("Radioshack Camera",[],[]);
 
 class camera {
-    static VC0706_PROTOCOL_SIGN                =  0x56
-    static VC0706_SERIAL_NUMBER                =  0x00
+    // Radioshack shield is strapped for 115200 default baud
+    // Adafruit shield is strapped for 38400 default baud
+    static UART_BAUD                           =  115200
+    static SPI_CLKSPEED                        =  4000
 
-    static VC0706_COMMAND_RESET                =  0x26
-    static VC0706_COMMAND_GEN_VERSION          =  0x11
-    static VC0706_COMMAND_TV_OUT_CTRL          =  0x44
-    static VC0706_COMMAND_OSD_ADD_CHAR         =  0x45
-    static VC0706_COMMAND_DOWNSIZE_SIZE        =  0x53
-    static VC0706_COMMAND_READ_FBUF            =  0x32
-    static FBUF_CURRENT_FRAME                  =  0
-    static FBUF_NEXT_FRAME                     =  0
+    /* Because the imp can send multi-byte messages over UART,
+     * and building blobs out of individual bytes during runtime
+     * is unnecessary, this class stores most frequently-used
+     * commands as static strings.
+     *
+     * commands from the original Arduino VC0706 library are 
+     * provided for reference below.
+     *
 
-    // 0x0A for UART Transfer ("MCU Mode")
-    // 0x0F for SPI Transfer
-    static FBUF_TRANSFER_MODE_UART             =  0x0A
-    static FBUF_TRANSFER_MODE_SPI              =  0x0F
+        static VC0706_PROTOCOL_SIGN                 =  0x56
+        static VC0706_SERIAL_NUMBER                 =  0x00
 
-    static VC0706_COMMAND_FBUF_CTRL            =  0x36
-    static VC0706_COMMAND_COMM_MOTION_CTRL     =  0x37
-    static VC0706_COMMAND_COMM_MOTION_DETECTED =  0x39
-    static VC0706_COMMAND_POWER_SAVE_CTRL      =  0x3E
-    static VC0706_COMMAND_COLOR_CTRL           =  0x3C
-    static VC0706_COMMAND_MOTION_CTRL          =  0x42
+        static VC0706_COMMAND_RESET                 =  0x26
+        static VC0706_COMMAND_GEN_VERSION           =  0x11
+        static VC0706_COMMAND_TV_OUT_CTRL           =  0x44
+        static VC0706_COMMAND_OSD_ADD_CHAR          =  0x45
+        static VC0706_COMMAND_DOWNSIZE_SIZE         =  0x53
+        static VC0706_COMMAND_READ_FBUF             =  0x32
+        static FBUF_CURRENT_FRAME                   =  0
+        static FBUF_NEXT_FRAME                      =  0
 
-    static VC0706_COMMAND_WRITE_DATA           =  0x31
-    static VC0706_COMMAND_GET_FBUF_LEN         =  0x34
+        // 0x0A for UART Transfer ("MCU Mode")
+        // 0x0F for SPI Transfer
+        static FBUF_TRANSFER_MODE_UART              =  0x0A
+        static FBUF_TRANSFER_MODE_SPI               =  0x0F
 
-    static READ_BLOCKSIZE                      =  56
+        static VC0706_COMMAND_FBUF_CTRL             =  0x36
+        static VC0706_COMMAND_COMM_MOTION_CTRL      =  0x37
+        static VC0706_COMMAND_COMM_MOTION_DETECTED  =  0x39
+        static VC0706_COMMAND_POWER_SAVE_CTRL       =  0x3E
+        static VC0706_COMMAND_COLOR_CTRL            =  0x3C
+        static VC0706_COMMAND_MOTION_CTRL           =  0x42
 
-    // Communication Parameters which may change during runtime
-    UART_BAUD = 115200;
+        static VC0706_COMMAND_WRITE_DATA            =  0x31
+        static VC0706_COMMAND_GET_FBUF_LEN          =  0x34
+    */
+
+    // Command strings sent over UART
+    // Commands all start with the "Protocol sign" and "serial number"
+    static CMD_RESET                            = "\x56\x00\x26\x00"
+    static CMD_GETVERSION                       = "\x56\x00\x11\x00"
+    static CMD_TVOUT                            = "\x56\x00\x44\x01"
+    static CMD_DOWNSIZE                         = "\x56\x00\x53\x01"
+    static CMD_SET_OSD_STR                      = "\x56\x00\x45"
+    static CMD_READ_FBUF_SPI                    = "\x56\x00\x32\x0C\x00\x0F\x00\x00\x00\x00\x00\x00"
+    static CMD_READ_FBUF_UART                   = "\x56\x00\x32\x0C\x00\x0A\x00\x00\x00\x00\x00\x00"
+    static CMD_CTRL_FBUF                        = "\x56\x00\x36\x01"
+    static CMD_SET_MOTION_DET                   = "\x56\x00\x37"
+    static CMD_MOTION_DET_EN                    = "\x56\x00\x37\x03\x00\x01"
+    static CMD_GET_FBUF_LEN                     = "\x56\x00\x34\x01"
+    static CMD_SET_POWERSAVE                    = "\x56\x00\x3E\x03\x00\x01"
+    static CMD_SET_COLOR                        = "\x56\x00\x3C\x02\x01"
+    static CMD_SET_COMP_RATIO                   = "\x56\x00\x05\x01\x01\x12\x04"
+    static CMD_160x120                          = "\x56\x00\x31\x05\x04\x01\x00\x19\x22"
+    static CMD_640x480                          = "\x56\x00\x31\x05\x04\x01\x00\x19\x00"
+    static CMD_SET_MOTION_WINDOWS               = "\x56\x00\x31\x08\x01\x04"
+
+    static READ_BLOCKSIZE                       =  56
     
     // set by constructor
     uart = null;
@@ -57,12 +89,17 @@ class camera {
      *************************************************************************/
     constructor(uart,spi,cs_l) {
         this.uart = uart;
+        // Configure the imp's UART interface for 8 data bits, no parity bits, 1 stop bit,
+        // no flow control
         this.uart.configure(UART_BAUD, 8, PARITY_NONE, 1, NO_CTSRTS);
 
         this.spi = spi;
-        this.spi.configure(CLOCK_IDLE_HIGH,4000); // SPI Transfer becomes unreliable around 6MHz
+        // Configure the imp's SPI interface
+        this.spi.configure(CLOCK_IDLE_HIGH, SPI_CLKSPEED);
         
         this.cs_l = cs_l;
+        // the imp's SPI interface does not implicitly include a CS pin
+        // configure a GPIO to use as the chip select (active low)
         this.cs_l.configure(DIGITAL_OUT);
         this.cs_l.write(1);
         
@@ -75,12 +112,7 @@ class camera {
      *
      *************************************************************************/
     function reset() {
-        local tx_buffer = blob(4);
-        tx_buffer.writen(VC0706_PROTOCOL_SIGN,'b');
-        tx_buffer.writen(VC0706_SERIAL_NUMBER,'b');
-        tx_buffer.writen(VC0706_COMMAND_RESET,'b');
-        tx_buffer.writen(0x00, 'b');
-        uart.write(tx_buffer);
+        uart.write(CMD_RESET);
         uart.flush();
     }
 
@@ -90,12 +122,7 @@ class camera {
      *
      *************************************************************************/
     function get_version() {
-        local tx_buffer = blob(4);
-        tx_buffer.writen(VC0706_PROTOCOL_SIGN,'b');
-        tx_buffer.writen(VC0706_SERIAL_NUMBER,'b');
-        tx_buffer.writen(VC0706_COMMAND_GEN_VERSION,'b');
-        tx_buffer.writen(0x00,'b');
-        uart.write(tx_buffer);
+        uart.write(CMD_GETVERSION);
         uart.flush();
     }
 
@@ -109,19 +136,11 @@ class camera {
      *
      *************************************************************************/
     function set_tv_out(val) {
-        local tx_buffer = blob(5);
-        tx_buffer.writen(VC0706_PROTOCOL_SIGN,'b');
-        tx_buffer.writen(VC0706_SERIAL_NUMBER,'b');
-        tx_buffer.writen(VC0706_COMMAND_TV_OUT_CTRL,'b');
-        tx_buffer.writen(0x01,'b');
-
         if (val) {
-            tx_buffer.writen(1,'b');
+            uart.write(CMD_TVOUT+"\x01");
         } else {
-            tx_buffer.writen(0,'b');
+            uart.write(CMD_TVOUT+"\x00");
         }
-        
-        uart.write(tx_buffer);
         uart.flush();
     }
 
@@ -145,19 +164,7 @@ class camera {
         row = row & 0x0f;
         local col_row = ((col << 4) | row);
 
-        local tx_buffer = blob(osd_str_len+6);
-        tx_buffer.writen(VC0706_PROTOCOL_SIGN,'b');
-        tx_buffer.writen(VC0706_SERIAL_NUMBER,'b');
-        tx_buffer.writen(VC0706_COMMAND_OSD_ADD_CHAR,'b');
-        tx_buffer.writen(osd_str_len+2,'b');
-        tx_buffer.writen(osd_str_len,'b');
-        tx_buffer.writen(col_row,'b');
-
-        for (local i = 0; i < osd_str_len; i++) {
-            tx_buffer.writen(osd_str[i],'b');
-        }
-
-        uart.write(tx_buffer);
+        uart.write(CMD_SET_OSD_STR+format("%c%c%c",(osd_str_len+2),osd_str_len,col_row)+osd_str);
         uart.flush();
     }
     /**************************************************************************
@@ -184,54 +191,7 @@ class camera {
 
         local scale = ((scale_height << 2) | scale_width);
 
-        local tx_buffer = blob(5);
-        tx_buffer.writen(VC0706_PROTOCOL_SIGN,'b');
-        tx_buffer.writen(VC0706_SERIAL_NUMBER,'b');
-        tx_buffer.writen(VC0706_COMMAND_DOWNSIZE_SIZE,'b');
-        tx_buffer.writen(0x01,'b');
-        tx_buffer.writen(scale,'b');
-
-        uart.write(tx_buffer);
-        uart.flush();
-    }
-
-    /**************************************************************************
-     *
-     * Read image data from frame buffer
-     *
-     * Input: buffer_address (4 bytes)
-     *        buffer_length  (4 bytes)
-     *
-     * No output or return value; send command, then call read_buffer 
-     *
-     *************************************************************************/
-    function read_frame_buffer(buffer_address, buffer_len) {
-        local tx_buffer = blob(16);
-
-        tx_buffer.writen(VC0706_PROTOCOL_SIGN,'b');
-        tx_buffer.writen(VC0706_SERIAL_NUMBER,'b');
-        tx_buffer.writen(VC0706_COMMAND_READ_FBUF,'b');
-        tx_buffer.writen(0x0C,'b');
-        tx_buffer.writen(FBUF_CURRENT_FRAME,'b');
-        tx_buffer.writen(FBUF_TRANSFER_MODE_UART,'b');
-        
-        // starting address
-        tx_buffer.writen((buffer_address >> 24), 'b');
-        tx_buffer.writen((buffer_address >> 16), 'b');
-        tx_buffer.writen((buffer_address >> 8), 'b');
-        tx_buffer.writen((buffer_address & 0xFF), 'b');
-
-        // data length
-        tx_buffer.writen((buffer_len >> 24), 'b');
-        tx_buffer.writen((buffer_len >> 16), 'b');
-        tx_buffer.writen((buffer_len >> 8), 'b');
-        tx_buffer.writen((buffer_len & 0xFF), 'b');
-
-        // delay time
-        tx_buffer.writen(0x00,'b');
-        tx_buffer.writen(0x0A,'b');
-
-        uart.write(tx_buffer);
+        uart.write(CMD_DOWNSIZE+format("%c",scale));
         uart.flush();
     }
 
@@ -247,18 +207,7 @@ class camera {
      *
      *************************************************************************/
     function ctrl_frame_buffer(val) {
-        if (val > 3) {
-            val = 3;
-        }
-
-        local tx_buffer = blob(5);
-        tx_buffer.writen(VC0706_PROTOCOL_SIGN,'b');
-        tx_buffer.writen(VC0706_SERIAL_NUMBER,'b');
-        tx_buffer.writen(VC0706_COMMAND_FBUF_CTRL,'b');
-        tx_buffer.writen(0x01,'b');
-        tx_buffer.writen(val,'b');
-
-        uart.write(tx_buffer);
+        uart.write(CMD_CTRL_FBUF+format("%c",val));
         uart.flush();
     }
 
@@ -272,17 +221,11 @@ class camera {
      *
      *************************************************************************/
     function set_motion_detect(val) {
-        local tx_buffer = blob(5);
-        tx_buffer.writen(VC0706_PROTOCOL_SIGN,'b');
-        tx_buffer.writen(VC0706_SERIAL_NUMBER,'b');
-        tx_buffer.writen(VC0706_COMMAND_COMM_MOTION_CTRL,'b');
         if (val) {
-            tx_buffer.writen(0x01,'b');
+            uart.write(CMD_SET_MOTION_DET+format("%c",0x01));
         } else {
-            tx_buffer.writen(0x00,'b');
+            uart.write(CMD_SET_MOTION_DET+format("%c",0x00));
         }
-
-        uart.write(tx_buffer);
         uart.flush();
     }
 
@@ -296,20 +239,12 @@ class camera {
      *
      *************************************************************************/
     function set_motion_detect_en(val) {
-        local tx_buffer = blob(7);
-        tx_buffer.writen(VC0706_PROTOCOL_SIGN,'b');
-        tx_buffer.writen(VC0706_SERIAL_NUMBER,'b');
-        tx_buffer.writen(VC0706_COMMAND_MOTION_CTRL,'b');
-        tx_buffer.writen(0x03,'b');
-        tx_buffer.writen(0x00,'b');
-        tx_buffer.writen(0x01,'b');
-        if (val) {
-            tx_buffer.writen(0x01,'b');
-        } else {
-            tx_buffer.writen(0x00,'b');
-        }
 
-        uart.write(tx_buffer);
+        if (val) {
+            uart.write(CMD_MOTION_DET_EN+format("%c",0x01));
+        } else {
+            uart.write(CMD_MOTION_DET_EN+format("%c",0x00));
+        }
         uart.flush();
     }
 
@@ -323,18 +258,11 @@ class camera {
      *
      *************************************************************************/
     function get_frame_buffer_len(type) {
-        local tx_buffer = blob(5);
-        tx_buffer.writen(VC0706_PROTOCOL_SIGN,'b');
-        tx_buffer.writen(VC0706_SERIAL_NUMBER,'b');
-        tx_buffer.writen(VC0706_COMMAND_GET_FBUF_LEN,'b');
-        tx_buffer.writen(0x01,'b');
         if (type) {
-            tx_buffer.writen(0x01,'b');
+            uart.write(CMD_GET_FBUF_LEN+format("%c",0x01));
         } else {
-            tx_buffer.writen(0x00,'b');
+            uart.write(CMD_GET_FBUF_LEN+format("%c",0x00));
         }
-
-        uart.write(tx_buffer);
         uart.flush();
     }
 
@@ -349,23 +277,11 @@ class camera {
      *
      *************************************************************************/
     function set_powersave(val) {
-        local tx_buffer = blob(7);
-        tx_buffer.writen(VC0706_PROTOCOL_SIGN,'b');
-        tx_buffer.writen(VC0706_SERIAL_NUMBER,'b');
-        tx_buffer.writen(VC0706_COMMAND_POWER_SAVE_CTRL,'b');
-        tx_buffer.writen(0x03,'b');
-        // power save control mode
-        tx_buffer.writen(0x00,'b');
-        // control by UART
-        tx_buffer.writen(0x01,'b');
-        // power save mode
         if (val) {
-            tx_buffer.writen(0x01,'b');
+            uart.write(CMD_SET_POWERSAVE+format("%c",0x01));
         } else {
-            tx_buffer.writen(0x00,'b');
+            uart.write(CMD_SET_POWERSAVE+format("%c",0x00));
         }
-
-        uart.write(tx_buffer);
         uart.flush();
     }
 
@@ -373,27 +289,17 @@ class camera {
      *
      * Select between black/white and color capture
      *
-     * Input: show_mode (integer 0-2)
+     * Input: mode (integer 0-2)
      *              0 -> auto mode 
      *              1 -> color mode
      *              2 -> black and white mode
      *
      *************************************************************************/
-    function set_uart_color_ctrl(show_mode) {
-        local tx_buffer = blob(6);
-        tx_buffer.writen(VC0706_PROTOCOL_SIGN,'b');
-        tx_buffer.writen(VC0706_SERIAL_NUMBER,'b');
-        tx_buffer.writen(VC0706_COMMAND_COLOR_CTRL,'b');
-        tx_buffer.writen(0x02,'b');
-        // control by UART
-        tx_buffer.writen(0x01,'b');
-        // automatically step black-white and color
+    function set_color_mode(mode) {
         if (show_mode > 2) {
             show_mode = 2;
         }
-        tx_buffer.writen(show_mode,'b');
-
-        uart.write(tx_buffer);
+        uart.write(CMD_SET_COLOR+format("%c",show_mode));
         uart.flush();
     }
 
@@ -413,21 +319,7 @@ class camera {
         }
         local vc_comp_ratio = ((ratio - 13) * 4) + 53; // math lol
 
-        local tx_buffer = blob(9);
-        tx_buffer.writen(VC0706_PROTOCOL_SIGN,'b');
-        tx_buffer.writen(VC0706_SERIAL_NUMBER,'b');
-        tx_buffer.writen(VC0706_COMMAND_WRITE_DATA,'b');
-        tx_buffer.writen(0x05,'b');
-        // chip register
-        tx_buffer.writen(0x01,'b');
-        // bytes ready to write
-        tx_buffer.writen(0x01,'b');
-        // register address
-        tx_buffer.writen(0x12,'b');
-        tx_buffer.writen(0x04,'b');
-        tx_buffer.writen(vc_comp_ratio,'b');
-
-        uart.write(tx_buffer);
+        uart.write(CMD_SET_COMP_RATIO+format("%c",vc_comp_ratio));
         uart.flush();
     }
 
@@ -441,40 +333,15 @@ class camera {
     }
 
     function set_size_160x120() {
-        local tx_buffer = blob(9);
-
-        tx_buffer.writen(VC0706_PROTOCOL_SIGN,'b');
-        tx_buffer.writen(VC0706_SERIAL_NUMBER,'b');
-        tx_buffer.writen(VC0706_COMMAND_WRITE_DATA,'b');
-        tx_buffer.writen(0x05,'b');
-        tx_buffer.writen(0x04,'b');
-        tx_buffer.writen(0x01,'b');
-        tx_buffer.writen(0x00,'b');
-        tx_buffer.writen(0x19,'b');
-        tx_buffer.writen(0x22,'b');
-
-        uart.write(tx_buffer);
+        uart.write(CMD_160x120);
         uart.flush();
     }
 
     function set_size_640x480() {
-        local tx_buffer = blob(9);
-
-        tx_buffer.writen(VC0706_PROTOCOL_SIGN,'b');
-        tx_buffer.writen(VC0706_SERIAL_NUMBER,'b');
-        tx_buffer.writen(VC0706_COMMAND_WRITE_DATA,'b');
-        tx_buffer.writen(0x05,'b');
-        tx_buffer.writen(0x04,'b');
-        tx_buffer.writen(0x01,'b');
-        tx_buffer.writen(0x00,'b');
-        tx_buffer.writen(0x19,'b');
-        tx_buffer.writen(0x00,'b');
-        
-        uart.write(tx_buffer);
+        uart.write(CMD_640x480);
         uart.flush();
     }
      
-
     /**************************************************************************
      *
      * Configure something interesting involving motion capture. 
@@ -485,50 +352,62 @@ class camera {
      *        data (4 bytes)
      *
      *************************************************************************/
-     function set_motion_windows(addr, data) {
-        local tx_buffer = blob(12);
-        tx_buffer.writen(VC0706_PROTOCOL_SIGN,'b');
-        tx_buffer.writen(VC0706_SERIAL_NUMBER,'b');
-        tx_buffer.writen(VC0706_COMMAND_WRITE_DATA,'b');
-        tx_buffer.writen(0x08,'b');
-        tx_buffer.writen(0x01,'b');
-        tx_buffer.writen(0x04,'b');
-        tx_buffer.writen((addr >> 8),'b');
-        tx_buffer.writen((addr & 0xFF),'b');
-        tx_buffer.writen((data >> 24),'b');
-        tx_buffer.writen((data >> 16),'b');
-        tx_buffer.writen((data >> 8),'b');
-        tx_buffer.writen((data & 0xFF),'b');
-
-        uart.write(tx_buffer);
+    function set_motion_windows(addr, data) {
+        uart.write(CMD_SET_MOTION_WINDOWS+format("%c%c%c%c%c%c",
+            (addr >> 8), (addr & 0xFF), (data >> 24), (data >> 16),
+            (data >> 8), (data & 0xFF)));
         uart.flush();
-     }
+    }
 
     /**************************************************************************
-    * 
-    * Read JPEG data from camera via SPI
-    * 
-    * Input: size (integer)
-    *           bytes to read via SPI
-    *
-    **************************************************************************/
-    function read_jpeg_spi(size) {
+     *
+     * Read image data from frame buffer
+     *
+     * Input: size (integer)
+     *          bytes to read via UART
+     *
+     *
+     *************************************************************************/
+    function read_frame_buffer_uart(size) {
+        local num_chunks = math.ceil(size.tofloat()/CHUNK_SIZE).tointeger();
+        agent.send("jpeg_start",size);
+
+        uart.write(CMD_READ_FBUF_UART+format("%c%c%c%c",
+            (size/256),(size%256),0x00,0x00));
+
+        uart.flush();
+        imp.sleep(0.01);
+
+        for(local i = 0; i < num_chunks; i++) {
+            local startingAddress = i*CHUNK_SIZE;
+            local buf = read_buffer_uart(CHUNK_SIZE);
+            agent.send("jpeg_chunk", [startingAddress, buf]);
+        }
+        
+        uart.write(tx_buffer);
+        uart.flush();
+    }
+
+    /**************************************************************************
+     * 
+     * Read JPEG data from camera via SPI
+     * 
+     * Input: size (integer)
+     *           bytes to read via SPI
+     *
+     **************************************************************************/
+    function read_frame_buffer_spi(size) {
         local num_chunks = math.ceil(size.tofloat()/CHUNK_SIZE).tointeger();
         agent.send("jpeg_start",size);
 
         // request entire buffer from camera via SPI
-        local tx_buffer = blob(16);
-        tx_buffer.writen(VC0706_PROTOCOL_SIGN,'b');
-        tx_buffer.writen(VC0706_SERIAL_NUMBER,'b');
-        tx_buffer.writen(VC0706_COMMAND_READ_FBUF,'b');
-        tx_buffer.writen(0x0C,'b');
-        tx_buffer.writen(0x00,'b');
-        tx_buffer.writen(0xFF,'b');
-        while (!tx_buffer.eos()) {
-            tx_buffer.writen(0x00,'b');
-        }
-        uart.write(tx_buffer);
+        uart.write(CMD_READ_FBUF_SPI+format("%c%c%c%c",
+            (size/256),(size%256),0x00,0x00));
+
+        // Force the UART to flush
         uart.flush();
+        // Give the camera's DSP chip 10 ms to figure out what to do with our command
+        imp.sleep(0.01);
 
         // assert chip select for the spi interface
         cs_l.write(0);
@@ -547,17 +426,7 @@ class camera {
         agent.send("jpeg_end", 1);
     }
 
-    /**************************************************************************
-     *
-     * Enable/disable motion monitoring over UART interface
-     *
-     * Input: val (1 byte)
-     *              0 -> stop motion monitoring over UART
-     *              1 -> start motion monitoring over UART
-     *
-     *************************************************************************/
     function capture_photo() {
-    
         camera_resume();
         imp.sleep(0.01);
         camera_pause();
@@ -567,17 +436,17 @@ class camera {
             uart.read();
         }
 
-        imp.sleep(0.005);
+        imp.sleep(0.01);
 
         get_frame_buffer_len(0);
         imp.sleep(0.01);
 
         local sizeBuf = read_buffer_uart(9);
-        local jpegSize = sizeBuf[0] * 256 + sizeBuf[1];
+        local jpegSize = sizeBuf[8] * 256 + sizeBuf[7];
 
         server.log(format("Captured JPEG (%d bytes)",jpegSize));
 
-        read_jpeg_spi(jpegSize);
+        read_frame_buffer_spi(jpegSize);
 
         server.log("Device: done sending image");
     }
@@ -597,12 +466,12 @@ class camera {
         while ((data != -1) && (rx_buffer.tell() < nBytes)) {
             rx_buffer.writen(data,'b');
             data = uart.read();
-            server.log(format("Got: 0x%02x",data));
+            //server.log(format("Got: 0x%02x",data));
         }
         if (rx_buffer[0] != 0x76) {
             server.error(format("Device got invalid return message: 0x%02x",rx_buffer[0]));
         }
-        if (rx_buffer[1] != VC0706_SERIAL_NUMBER) {
+        if (rx_buffer[1] != 0x00) {
             server.error(format("Message returned with invalid serial number: 0x%02x",rx_buffer[1]));
         }
 
