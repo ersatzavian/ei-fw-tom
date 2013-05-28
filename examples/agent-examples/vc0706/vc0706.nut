@@ -114,6 +114,8 @@ class camera {
     function reset() {
         uart.write(CMD_RESET);
         uart.flush();
+        imp.sleep(0.005);
+        server.log("Camera Ready.");
     }
 
     /**************************************************************************
@@ -208,7 +210,10 @@ class camera {
      *************************************************************************/
     function ctrl_frame_buffer(val) {
         uart.write(CMD_CTRL_FBUF+format("%c",val));
+        // force the commands to go out on the wire
         uart.flush();
+        // wait for the command to be processed
+        imp.sleep(0.005);      
     }
 
     /**************************************************************************
@@ -222,9 +227,9 @@ class camera {
      *************************************************************************/
     function set_motion_detect(val) {
         if (val) {
-            uart.write(CMD_SET_MOTION_DET+format("%c",0x01));
+            uart.write(CMD_SET_MOTION_DET+"\x01");
         } else {
-            uart.write(CMD_SET_MOTION_DET+format("%c",0x00));
+            uart.write(CMD_SET_MOTION_DET+"\x00");
         }
         uart.flush();
     }
@@ -241,9 +246,9 @@ class camera {
     function set_motion_detect_en(val) {
 
         if (val) {
-            uart.write(CMD_MOTION_DET_EN+format("%c",0x01));
+            uart.write(CMD_MOTION_DET_EN+"\x01");
         } else {
-            uart.write(CMD_MOTION_DET_EN+format("%c",0x00));
+            uart.write(CMD_MOTION_DET_EN+"\x00");
         }
         uart.flush();
     }
@@ -255,15 +260,24 @@ class camera {
      * Input: type (1 byte)
      *              0 -> current frame buffer
      *              1 -> next frame buffer
+     * 
+     * Return: length of data in buffer (bytes)
      *
      *************************************************************************/
     function get_frame_buffer_len(type) {
         if (type) {
-            uart.write(CMD_GET_FBUF_LEN+format("%c",0x01));
+            uart.write(CMD_GET_FBUF_LEN+"\x01");
         } else {
-            uart.write(CMD_GET_FBUF_LEN+format("%c",0x00));
+            uart.write(CMD_GET_FBUF_LEN+"\x00");
         }
         uart.flush();
+
+        imp.sleep(0.01);
+
+        local sizeBuf = read_buffer_uart(9);
+        local jpegSize = sizeBuf[7] * 256 + sizeBuf[8];
+
+        return jpegSize;
     }
 
     /**************************************************************************
@@ -278,9 +292,9 @@ class camera {
      *************************************************************************/
     function set_powersave(val) {
         if (val) {
-            uart.write(CMD_SET_POWERSAVE+format("%c",0x01));
+            uart.write(CMD_SET_POWERSAVE+"\x01");
         } else {
-            uart.write(CMD_SET_POWERSAVE+format("%c",0x00));
+            uart.write(CMD_SET_POWERSAVE+"\x00");
         }
         uart.flush();
     }
@@ -321,25 +335,21 @@ class camera {
 
         uart.write(CMD_SET_COMP_RATIO+format("%c",vc_comp_ratio));
         uart.flush();
-    }
-
-    /* Wrapper functions for more readability */
-    function camera_resume() {
-        ctrl_frame_buffer(3);
-    }
-
-    function camera_pause() {
-        ctrl_frame_buffer(0);
+        server.log("Camera Compression Ratio set to "+ratio);
     }
 
     function set_size_160x120() {
         uart.write(CMD_160x120);
         uart.flush();
+        imp.sleep(0.01);
+        server.log("Image Size set to 160x120");
     }
 
     function set_size_640x480() {
         uart.write(CMD_640x480);
         uart.flush();
+        imp.sleep(0.01);
+        server.log("Image Size set to 640x480");
     }
      
     /**************************************************************************
@@ -426,29 +436,31 @@ class camera {
         agent.send("jpeg_end", 1);
     }
 
+    function pause_capture() {
+        ctrl_frame_buffer(0);
+        server.log("Camera Paused");
+    }
+
+    function resume_capture() {
+        ctrl_frame_buffer(3);
+        server.log("Camera Capture Resumed");
+    }
+
     function capture_photo() {
-        camera_resume();
-        imp.sleep(0.01);
-        camera_pause();
-
-        // clear RX buffer
-        while (uart.read() != -1) {
-            uart.read();
-        }
-
+        pause_capture();
         imp.sleep(0.01);
 
-        get_frame_buffer_len(0);
-        imp.sleep(0.01);
+        clear_uart();
 
-        local sizeBuf = read_buffer_uart(9);
-        local jpegSize = sizeBuf[8] * 256 + sizeBuf[7];
+        local jpegSize = get_frame_buffer_len(0);
 
         server.log(format("Captured JPEG (%d bytes)",jpegSize));
 
         read_frame_buffer_spi(jpegSize);
 
         server.log("Device: done sending image");
+
+        resume_capture();
     }
 
     /**************************************************************************
@@ -463,24 +475,37 @@ class camera {
 
         local data = uart.read()
         //server.log(format("Got: 0x%02x",data));
-        while ((data != -1) && (rx_buffer.tell() < nBytes)) {
+        while ((data >= 0) && (rx_buffer.tell() < nBytes)) {
             rx_buffer.writen(data,'b');
             data = uart.read();
             //server.log(format("Got: 0x%02x",data));
         }
+        /*
         if (rx_buffer[0] != 0x76) {
             server.error(format("Device got invalid return message: 0x%02x",rx_buffer[0]));
         }
         if (rx_buffer[1] != 0x00) {
             server.error(format("Message returned with invalid serial number: 0x%02x",rx_buffer[1]));
         }
-
+        */
         return rx_buffer;
     }
+
+    function clear_uart() {
+        local data = uart.read();
+
+        while(data >= 0) {
+            //server.log(format("Got: 0x%02x",data));
+            data = uart.read();
+        }
+        server.log("UART RX Buffer Cleared.");
+    }
+
 }
 
 myCamera <- camera(hardware.uart1289,hardware.spi257,hardware.pin1);
-server.log("Camera Ready.");
+
+myCamera.set_size_160x120();
 
 agent.on("take_picture", function(val) {
     myCamera.capture_photo();
