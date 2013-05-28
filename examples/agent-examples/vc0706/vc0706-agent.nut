@@ -1,3 +1,5 @@
+const MY_SERVER_URL = "http://www.demoserver.com/upload.php";
+
 requests <- []
 
 jpeg_buffer <- null
@@ -21,18 +23,12 @@ device.on("jpeg_end", function(v) {
     foreach(chr in jpeg_buffer) {
         s += format("%c", chr);
     }
-    foreach(res in requests) {
-        res.header("Content-Type", "image/jpeg");
-        res.send(200, s);
-    }
-    /*
-    local req = http.post("http://demo2.electricimp.com/hackathon/upload.php", {}, s);
+    local req = http.post(MY_SERVER_URL, {}, s);
     req.sendsync();
     foreach(res in requests) {
         res.header("Location", "http://demo2.electricimp.com/hackathon/camera.jpg");
         res.send(302, "Found\n");
     }
-    */
     server.log(format("Agent: JPEG Sent (%d bytes)"s.len()));
 });
 
