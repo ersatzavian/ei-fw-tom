@@ -20,6 +20,14 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SO
 /* Imp firmware for RadioShack Camera Shield
  Shield is Based on VC0706 Camera Module
  http://blog.radioshack.com/2013/01/radioshack-camera-shield-for-arduino-boards/
+
+ NOTE: Adafruit's VC0706 camera shield is strapped to boot at 38400 baud,
+       while Radioshack's shield defaults to 115200 baud. 
+
+       Both modules are strapped to boot in SPI Master mode, and require
+       pin 80 on the VC0706 to be pulled to 3.3V in order to enable
+       SPI slave mode, which this class requires in order to read frame
+       buffers via SPI.
  
  T. Buttner
  5/10/13
@@ -34,7 +42,6 @@ imp.configure("Radioshack Camera",[],[]);
 class camera {
     // Radioshack shield is strapped for 115200 default baud
     // Adafruit shield is strapped for 38400 default baud
-    static UART_BAUD                           =  115200
     static SPI_CLKSPEED                        =  4000
 
     /* Because the imp can send multi-byte messages over UART,
@@ -97,6 +104,7 @@ class camera {
     static READ_BLOCKSIZE                       =  56
     
     // set by constructor
+    UART_BAUD = null;
     uart = null;
     spi = null;
     cs_l = null;
@@ -106,8 +114,9 @@ class camera {
      * Constructor takes in a UART interface, initializes it, and resets the camera
      *
      *************************************************************************/
-    constructor(uart,spi,cs_l) {
+    constructor(uart,baud,spi,cs_l) {
         this.uart = uart;
+        this.UART_BAUD = baud;
         // Configure the imp's UART interface for 8 data bits, no parity bits, 1 stop bit,
         // no flow control
         this.uart.configure(UART_BAUD, 8, PARITY_NONE, 1, NO_CTSRTS);
@@ -522,7 +531,7 @@ class camera {
 
 }
 
-myCamera <- camera(hardware.uart1289,hardware.spi257,hardware.pin1);
+myCamera <- camera(hardware.uart1289,115200,hardware.spi257,hardware.pin1);
 
 myCamera.set_size_160x120();
 
