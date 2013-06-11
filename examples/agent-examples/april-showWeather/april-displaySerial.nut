@@ -83,6 +83,7 @@ class parDisplay
     }
 }
 
+/* DEPRECATED: USE agent.on()
 // here we create an input port for use on the Blueprint by extending the default InputPort Class
 // for more information on input and output ports, see:
 // http://devwiki.electricimp.com/doku.php?id=example:start
@@ -103,6 +104,7 @@ class displayInput extends InputPort
         display.light(0);
     }
 }
+*/
 
 // instantiate our parallax display class
 display <- local display = parDisplay(UART_57);
@@ -126,6 +128,8 @@ server.log("Disp UART: Start");
 // first: text to be displayed in this node on the Blueprint
 // second: an array of input ports (we have one)
 // thrid: an array of output ports (we have none)
-imp.configure("Disp UART", [ displayInput() ], []);
 
-//EOF
+/* DEPRECATED: Use agent.on() instead of input ports
+imp.configure("Disp UART", [ displayInput() ], []);
+*/
+imp.configure("Disp UART", [],[]);
