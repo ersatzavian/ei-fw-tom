@@ -182,10 +182,11 @@ function playbackBufferEmpty(buffer) {
         // the DAC will be stopped before it runs out of buffers anyway
         return;
     }
-    playbackPtr += buffer.len();
 
     // read another buffer out of the flash and load it back into the DAC
     hardware.fixedfrequencydac.addbuffer( flash.read( playbackPtr, buffer.len() ) );
+
+    playbackPtr += buffer.len();
 }
 
 // prep buffers to begin message playback
@@ -330,20 +331,24 @@ function playMessage() {
     // set the playing flag
     playing = true;
 
-    // enable the speaker
-    speakerEnable.write(1);
-
     // start the dac
     server.log("Device: starting the DAC");
     hardware.fixedfrequencydac.start();
+
+    // enable the speaker
+    speakerEnable.write(1);
 }
 
 function checkBattery() {
     imp.wakeup((5*60), checkBattery);     // check every 5 minutes
-    mic.enable();
-    imp.sleep(0.01);
+    // lala rev2 requires LED to be turned on to read battery
+    led.write(1);
+    // lala rev1 requires mic to be enabled to read battery
+    //mic.enable();
     local Vbatt = (hardware.pinA.read()/65535.0) * hardware.voltage() * (6.9/2.2);
     server.log(format("Battery Voltage %.2f V",Vbatt));
+    //mic.disable();
+    led.write(0);
 }
 
 /* CLASS DEFINITIONS ---------------------------------------------------------*/
