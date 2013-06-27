@@ -556,7 +556,6 @@ class spiFlash {
     function chipErase() {
         server.log("Device: Erasing SPI Flash");
         cs_l.write(0);
-        this.select();
         spi.write(CE);
         cs_l.write(1);
         // chip erase takes a *while*
