@@ -555,6 +555,7 @@ class spiFlash {
     // clear the full flash to 0xFF
     function chipErase() {
         server.log("Device: Erasing SPI Flash");
+        this.wrenable();
         cs_l.write(0);
         spi.write(CE);
         cs_l.write(1);
