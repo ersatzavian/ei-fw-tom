@@ -1,5 +1,0 @@
-This bundle is a test model for the "lala" audio impee reference design.
-
-The test code is not a fully interactive test; code to test various functional blocks is commented or uncommented as needed. 
-
-Note that if audio from the test agent is downloaded, it must be base-64 decoded before importing into an audio player to check. 
