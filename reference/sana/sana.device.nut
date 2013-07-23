@@ -24,9 +24,30 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SO
 
 /* Globals and Constants ----------------------------------------------------*/
 // button polling interval
-const BTNINTERVAL = 0.15;
+const BTNINTERVAL 			= 0.15;
 // temp measurement interval;
-const TMPINTERVAL = 60.0;
+const TMPINTERVAL 			= 60.0;
+// IR Record buffer size & recording parameters
+const BUFFERSIZE  			= 4096;
+const SAMPLERATE			= 16000;
+
+// IR Code transmit times in microseconds
+const START_TIME_HIGH 		= 4500;
+const START_TIME_LOW		= 4500;
+const PULSE_TIME 			= 600;
+const TIME_LOW_1			= 1700;
+const TIME_LOW_0			= 600;
+const THRESH_0				= 1000;
+const THRESH_1				= 2000;
+
+// IR Receive Timeouts
+const IR_RX_DONE			= 6000; // us
+const IR_RX_TIMEOUT 		= 1000; // ms
+
+// Time between decodes in seconds
+const IR_RX_DISABLE			= 0.2500;
+// Vishay IR RX part is active-low
+const IR_IDLE_STATE			= 1;
 
 /* Class and Function Definitions -------------------------------------------*/
 
@@ -540,12 +561,200 @@ class tmp112 {
 	}
 }
 
+/* 
+ * Send an IR Code over the IR LED 
+ * 
+ * Input: 
+ * 		IR Code (string). Each bit is represented by a literal character in the string.
+ *			Example: "111000001110000001000000101111111"
+ * 			Both states are represented by a fixed-width pulse, followed by a low time which varies to 
+ * 			indicate the state. 
+ *
+ * Return:
+ * 		None
+ */
+function send_IR_code (code) {
+	server.log("Sending Code, len = "+code.len());
+	// make sure pwm carrier is disabled
+	pwm.write(0.0);
+	local clkrate = 1000.0 * spi.configure(0,234);
+	local bytetime = 8 * (1.0/clkrate);
+	server.log(format("Clock Rate %d, Byte Time %.6f",clkrate, bytetime));
+
+	// calculate the number of bytes we need to send each signal
+	local start_bytes_high = (START_TIME_HIGH / bytetime).tointeger();
+	local start_bytes_low =  (START_TIME_LOW / bytetime).tointeger();
+	local pulse_bytes = (PULSE_TIME / bytetime).tointeger();
+	local bytes_1 = (TIME_LOW_1 / bytetime).tointeger();
+	local bytes_0 = (TIME_LOW_0 / bytetime).tointeger();
+	server.log(format("%d pulse bytes, %d ON bytes, %d OFF bytes",pulse_bytes, bytes_1, bytes_0));
+
+	local code_blob = blob(pulse_bytes); // blob will grow as it is written
+
+	// Write the start sequence into the blob
+	for (local i = 0; i < start_bytes_high; i++) {
+		code_blob.writen(0xFF, 'b');
+	}
+	for (local i = 0; i < start_bytes_low; i++) {
+		code_blob.writen(0x00, 'b');
+	}
+
+	// now encode each bit in the code
+	foreach (bit in code) {
+		//server.log(bit);
+		// this will be set when we figure out if this bit in the code is high or low
+		local low_bytes = 0;
+		// first, encode the pulse (same for both states)aa
+		for (local j = 0; j < pulse_bytes; j++) {
+			code_blob.writen(0xFF,'b');
+		}
+
+		// now, figure out if the bit is high or low
+		// ascii code for "1" is 49 ("0" is 48)
+		if (bit == 49) {
+			//server.log("Encoding 1");
+			low_bytes = bytes_1;
+		} else {
+			//server.log("Encoding 0");
+			low_bytes = bytes_0;
+		}
+
+		// write the correct number of low bytes to the blob, then check the next bit
+		for (local k = 0; k < low_bytes; k++) {
+			code_blob.writen(0x00,'b');
+		}
+	}
+		
+	// the code is now written into the blob. Time to send it. 
+
+	// enable PWM carrier
+	pwm.write(0.5);
+
+	// send code four times
+	for (local i = 0; i < 4; i++) {
+		spi.write(code_blob);
+		spi.write("\x00");
+		imp.sleep(0.046);
+	}
+	
+	// disable pwm carrier
+	pwm.write(0.0);
+	server.log("Sent Codes to TV.");
+	// clear the SPI lines
+	spi.write("\x00");
+}
+
+function samplesReady(buffer,length) {
+	if (length > 0) {
+		agent.send("irdata",buffer); 
+	} else {
+		server.log("Device: Buffer Overrun.");
+	}
+}
+
+function stopSampler() {
+	server.log("Device: Stopping IR Recording.");
+	hardware.sampler.stop();
+
+	// reconfigure sampler to reclaim buffer memory
+	hardware.sampler.configure(hardware.pin2, SAMPLERATE,
+		[blob(2)], samplesReady);
+
+	agent.send("irdatadone",0);
+}
+
+function recordIR() {
+	hardware.sampler.configure(hardware.pin2,SAMPLERATE,
+		[blob(BUFFERSIZE),blob(BUFFERSIZE),blob(BUFFERSIZE)],
+		samplesReady);
+
+	imp.wakeup(10.0, stopSampler);
+	
+	hardware.sampler.start();
+
+	server.log("Device: IR Recording.");
+}
+
+function ir_rx() {
+	//server.log("IR RX Callback Active.");
+	local newcode = "";
+	local last_state = hardware.pin2.read();
+	local duration = 0;
+	local durations = "durations:\n";
+
+	local bit = 0;
+
+	local start = hardware.millis();
+	local last_change_time = hardware.micros();
+
+	local state = 0;
+	local now = start;
+
+	while (1) {
+
+		// waiting for pin to change state
+		state = hardware.pin2.read();
+		now = hardware.micros();
+
+		if (state == last_state) {
+			// last state change was over IR_RX_DONE ago; we're done with code; quit.
+			if ((now - last_change_time) > IR_RX_DONE) {
+				break;
+			} else {
+				continue;
+			}
+		}
+
+		// check and see if the variable (low) portion of the pulse has just ended
+		if (state != IR_IDLE_STATE) {
+			// the low time just ended. Measure it and add to the code string
+			duration = now - last_change_time;
+			if (duration < THRESH_0) {
+				// this is a 0
+				newcode += "0";
+			} else if (duration < THRESH_1) {
+				// this is a 1;
+				newcode += "1";
+			} else {
+				// this was the start pulse; ignore
+			}
+		}
+
+		last_state = state;
+		last_change_time = now;
+
+		// if we're here, we're currently measuring the low time of a pulse
+		// just wait for the next state change and we'll tally it up
+	}
+
+	// codes have to end with a 1, effectively, because of how they're sent
+	newcode += "1";
+
+	// codes are sent multiple times, so disable the receiver briefly before re-enabling
+	disable_ir_rx();
+	imp.wakeup(IR_RX_DISABLE, enable_ir_rx);
+
+	server.log("Got new IR Code ("+newcode.len()+"): "+newcode);
+	agent.send("newcode", newcode);
+}
+
+function enable_ir_rx() {
+	// re-configure pin with state change callback
+	hardware.pin2.configure(DIGITAL_IN, ir_rx);
+}
+
+function disable_ir_rx() {
+	// re-configure pin without state change callback
+	hardware.pin2.configure(DIGITAL_IN);
+}
+
 function poll_btn() {
 	imp.wakeup(BTNINTERVAL, poll_btn);
 	if (btn.read()) {
 		// button released
 	} else {
 		server.log("Button Pressed");
+		recordIR();
 	}
 }
 
@@ -560,11 +769,29 @@ function poll_temp() {
 	server.log(format("TMP112 Temp: %.2f C (%.2f F)",t_digital.read_c(),t_digital.read_f()));
 }
 
+/* AGENT CALLBACKS ----------------------------------------------------------*/
+
+agent.on("send_code", function(code) {
+	send_IR_code(code);
+});
+
 /* RUNTIME STARTS HERE ------------------------------------------------------*/
 
 imp.configure("Sana",[],[]);
 imp.enableblinkup(true);
 
+// initialize SPI bus to send codes
+spi <- hardware.spi257;
+// SPI257 minimum clock rate is 234 kHz
+server.log("SPI Running at "+spi.configure(0, 234)+" kHz");
+
+// pwm carrier signal
+pwm <- hardware.pin1;
+pwm.configure(PWM_OUT, 1.0/38000.0, 0.0);
+spi.configure(0,234);
+spi.write("\x00");
+
+// instantiate sensor classes
 t_analog <- thermistor(hardware.pinA, 4250, 298.15, 10000.0, 2);
 hardware.i2c89.configure(CLOCK_SPEED_100_KHZ);
 t_digital <- tmp112(hardware.i2c89, 0x92, hardware.pinB, 1.0, temp_alert);
@@ -572,11 +799,16 @@ t_digital.reset();
 
 btn <- hardware.pin6;
 btn.configure(DIGITAL_IN_PULLUP);
-// pin 6 doesn't support state change callbacks, so we have to poll
-poll_btn();
+
+// initialize the IR recieve pin to learn codes
+hardware.pin2.configure(DIGITAL_IN, ir_rx);
+server.log("Pin 2 resting at "+hardware.pin2.read());
 
 imp.wakeup(1.0, function() {
 	// start the temp polling loop
 	poll_temp();
+
+	// pin 6 doesn't support state change callbacks, so we have to poll
+	poll_btn();
 });
 
