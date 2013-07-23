@@ -27,9 +27,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SO
 const BTNINTERVAL 			= 0.15;
 // temp measurement interval;
 const TMPINTERVAL 			= 60.0;
-// IR Record buffer size & recording parameters
-const BUFFERSIZE  			= 4096;
-const SAMPLERATE			= 16000;
 
 // IR Code transmit times in microseconds
 const START_TIME_HIGH 		= 4500;
@@ -37,17 +34,6 @@ const START_TIME_LOW		= 4500;
 const PULSE_TIME 			= 600;
 const TIME_LOW_1			= 1700;
 const TIME_LOW_0			= 600;
-const THRESH_0				= 1000;
-const THRESH_1				= 2000;
-
-// IR Receive Timeouts
-const IR_RX_DONE			= 6000; // us
-const IR_RX_TIMEOUT 		= 1000; // ms
-
-// Time between decodes in seconds
-const IR_RX_DISABLE			= 0.2500;
-// Vishay IR RX part is active-low
-const IR_IDLE_STATE			= 1;
 
 /* Class and Function Definitions -------------------------------------------*/
 
@@ -561,6 +547,185 @@ class tmp112 {
 	}
 }
 
+/*
+ * Generic Class to learn IR Remote Control Codes 
+ * Useful for:
+ * 		- TV Remotes
+ *		- Air conditioner / heater units
+ * 		- Fans / remote-control light fixtures
+ *		- Other things not yet attempted!
+ *
+ * For more information on Differential Pulse Position Modulation, see
+ * http://learn.adafruit.com/ir-sensor
+ *
+ * Input: 
+ *
+ */
+class IR_receiver {
+
+	/* Receiver Thresholds in us. Inter-pulse times < THRESH_0 are zeros, 
+	 * while times > THRESH_0 but < THRESH_1 are ones, and times > THRESH_1 
+	 * are either the end of a pulse train or the start pulse at the beginning of a code */
+	THRESH_0					= 1000;
+	THRESH_1					= 2000;
+
+	/* IR Receive Timeouts
+	 * IR_RX_DONE is the max time to wait after a pulse before determining that the 
+	 * pulse train is complete and stopping the reciever. */
+	IR_RX_DONE					= 6000; // us
+
+	/* IR_RX_TIMEOUT is an overall timeout for the receive loop. Prevents the device from
+	 * locking up if the IR signal continues to oscillate for an unreasonable amount of time */
+	IR_RX_TIMEOUT 				= 1000; // ms
+
+	/* The receiver is disabled between codes to prevent firing the callback multiple times (as 
+	 * most remotes send the code multiple times per button press). IR_RX_DISABLE determines how
+	 * long the receiver is disabled after successfully receiving a code. */
+	IR_RX_DISABLE				= 0.2500; // seconds
+
+	/* The Vishay TSOP6238TT IR Receiver IC is active-low, while a simple IR detector circuit with a
+	 * IR Phototransistor and resistor will be active-high. */
+	IR_IDLE_STATE				= 1;
+
+	rx_pin = null;
+
+	/* Name of the callback to send to the agent when a new code is recieved. 
+	 * This is done instead of just returning the code because this class is called as a state-change callback; 
+	 * The main loop will not have directly called receive() and thus will not be prepared to receive the code. */
+	agent_callback = null;
+
+	/* 
+	 * Receive a new IR Code on the input pin. 
+	 * 
+	 * This function is configured as a state-change callback on the receive pin in the constructor,
+	 * so it must be defined before the constructor.
+	 */
+	function receive() {
+		// Code is stored as a string of 1's and 0's as the pulses are measured.
+		local newcode = "";
+		local last_state = rx_pin.read();
+		local duration = 0;
+
+		local start = hardware.millis();
+		local last_change_time = hardware.micros();
+
+		local state = 0;
+		local now = start;
+
+		/* 
+		 * This loop runs much faster with while(1) than with a timeout check in the while condition
+		 */
+		while (1) {
+
+			/* determine if pin has changed state since last read
+			 * get a timestamp in case it has; we don't want to wait for code to execute before getting the
+			 * timestamp, as this will make the reading less accurate. */
+			state = hardware.pin2.read();
+			now = hardware.micros();
+
+			if (state == last_state) {
+				// last state change was over IR_RX_DONE ago; we're done with code; quit.
+				if ((now - last_change_time) > IR_RX_DONE) {
+					break;
+				} else {
+					// no state change; go back to the top of the while loop and check again
+					continue;
+				}
+			}
+
+			// check and see if the variable (low) portion of the pulse has just ended
+			if (state != IR_IDLE_STATE) {
+				// the low time just ended. Measure it and add to the code string
+				duration = now - last_change_time;
+				if (duration < THRESH_0) {
+					newcode += "0";
+				} else if (duration < THRESH_1) {
+					newcode += "1";
+				} else {
+					// this was the start pulse; ignore
+				}
+			}
+
+			last_state = state;
+			last_change_time = now;
+
+			// if we're here, we're currently measuring the low time of a pulse
+			// just wait for the next state change and we'll tally it up
+		}
+
+		// codes have to end with a 1, effectively, because of how they're sent
+		newcode += "1";
+
+		// codes are sent multiple times, so disable the receiver briefly before re-enabling
+		disable();
+		imp.wakeup(IR_RX_DISABLE, enable.bindenv(this));
+
+		server.log("Got new IR Code ("+newcode.len()+"): "+newcode);
+		agent.send(agent_callback, newcode);
+	}
+
+	/* 
+	 * Instantiate a new IR Code Reciever
+	 * 
+	 * Input: 
+	 * 		_rx_pin: (pin object) pin to listen to for codes. 
+	 *			Requires a pin that supports state-change callbacks.
+	 * 		_rx_idle_state: (integer) 1 or 0. State of the RX Pin when idle (no code being transmitted).
+	 * 		_agent_callback: (string) string to send to the agent to indicate the agent callback for a new code.
+	 * 		
+	 * 		OPTIONAL:
+	 * 
+	 * 		_thresh_0: (integer) threshold in microseconds for a "0". Inter-pulse gaps shorter than this will 
+	 * 			result in a zero being received.
+	 *		_thresh_1: (integer) threshold in microseconds for a "1". Inter-pulse gaps longer than THRESH_0 but
+	 * 			shorter than THRESH_1 will result in a 1 being received. Gaps longer than THRESH_1 are ignored.
+	 *		_ir_rx_done: (integer) time in microseconds to wait for the next pulse before determining that the end
+	 * 			of a pulse train has been reached. 
+	 *		_ir_rx_timeout: (integer) max time in milliseconds to listen to a new code. Prevents lock-up if the 
+	 *			IR signal oscillates for an unreasonable amount of time.
+	 * 		_ir_rx_disable: (integer) time in seconds to disable the receiver after successfully receiving a code.
+	 */
+	constructor(_rx_pin, _rx_idle_state, _agent_callback, _thresh_0 = null, _thresh_1 = null,
+		_ir_rx_done = null, _ir_rx_timeout = null, _ir_rx_disable = null) {
+		this.rx_pin = _rx_pin;
+		rx_pin.configure(DIGITAL_IN, receive.bindenv(this));
+
+		IR_IDLE_STATE = _rx_idle_state;
+
+		agent_callback = _agent_callback;
+
+		/* If any of the timeouts were passed in as arguments, override the default value for that
+		 * timeout here. */
+		if (_thresh_0) {
+			THRESH_0 = _thresh_0;
+		}
+
+		if (_thresh_1) {
+			THRESH_1 = _thresh_1;
+		}
+
+		if (_ir_rx_done) {
+			IR_RX_DONE = _ir_rx_done;
+		}
+
+		if (_ir_rx_timeout) {
+			IR_RX_TIMEOUT = _ir_rx_timeout;
+		}
+
+		if (_ir_rx_disable) {
+			IR_RX_DISABLE = _ir_rx_disable;
+		}
+	}
+
+	function enable() {
+		rx_pin.configure(DIGITAL_IN, receive.bindenv(this));
+	}
+
+	function disable() {
+		rx_pin.configure(DIGITAL_IN);
+	}
+}
+
 /* 
  * Send an IR Code over the IR LED 
  * 
@@ -644,110 +809,6 @@ function send_IR_code (code) {
 	spi.write("\x00");
 }
 
-function samplesReady(buffer,length) {
-	if (length > 0) {
-		agent.send("irdata",buffer); 
-	} else {
-		server.log("Device: Buffer Overrun.");
-	}
-}
-
-function stopSampler() {
-	server.log("Device: Stopping IR Recording.");
-	hardware.sampler.stop();
-
-	// reconfigure sampler to reclaim buffer memory
-	hardware.sampler.configure(hardware.pin2, SAMPLERATE,
-		[blob(2)], samplesReady);
-
-	agent.send("irdatadone",0);
-}
-
-function recordIR() {
-	hardware.sampler.configure(hardware.pin2,SAMPLERATE,
-		[blob(BUFFERSIZE),blob(BUFFERSIZE),blob(BUFFERSIZE)],
-		samplesReady);
-
-	imp.wakeup(10.0, stopSampler);
-	
-	hardware.sampler.start();
-
-	server.log("Device: IR Recording.");
-}
-
-function ir_rx() {
-	//server.log("IR RX Callback Active.");
-	local newcode = "";
-	local last_state = hardware.pin2.read();
-	local duration = 0;
-	local durations = "durations:\n";
-
-	local bit = 0;
-
-	local start = hardware.millis();
-	local last_change_time = hardware.micros();
-
-	local state = 0;
-	local now = start;
-
-	while (1) {
-
-		// waiting for pin to change state
-		state = hardware.pin2.read();
-		now = hardware.micros();
-
-		if (state == last_state) {
-			// last state change was over IR_RX_DONE ago; we're done with code; quit.
-			if ((now - last_change_time) > IR_RX_DONE) {
-				break;
-			} else {
-				continue;
-			}
-		}
-
-		// check and see if the variable (low) portion of the pulse has just ended
-		if (state != IR_IDLE_STATE) {
-			// the low time just ended. Measure it and add to the code string
-			duration = now - last_change_time;
-			if (duration < THRESH_0) {
-				// this is a 0
-				newcode += "0";
-			} else if (duration < THRESH_1) {
-				// this is a 1;
-				newcode += "1";
-			} else {
-				// this was the start pulse; ignore
-			}
-		}
-
-		last_state = state;
-		last_change_time = now;
-
-		// if we're here, we're currently measuring the low time of a pulse
-		// just wait for the next state change and we'll tally it up
-	}
-
-	// codes have to end with a 1, effectively, because of how they're sent
-	newcode += "1";
-
-	// codes are sent multiple times, so disable the receiver briefly before re-enabling
-	disable_ir_rx();
-	imp.wakeup(IR_RX_DISABLE, enable_ir_rx);
-
-	server.log("Got new IR Code ("+newcode.len()+"): "+newcode);
-	agent.send("newcode", newcode);
-}
-
-function enable_ir_rx() {
-	// re-configure pin with state change callback
-	hardware.pin2.configure(DIGITAL_IN, ir_rx);
-}
-
-function disable_ir_rx() {
-	// re-configure pin without state change callback
-	hardware.pin2.configure(DIGITAL_IN);
-}
-
 function poll_btn() {
 	imp.wakeup(BTNINTERVAL, poll_btn);
 	if (btn.read()) {
@@ -800,9 +861,8 @@ t_digital.reset();
 btn <- hardware.pin6;
 btn.configure(DIGITAL_IN_PULLUP);
 
-// initialize the IR recieve pin to learn codes
-hardware.pin2.configure(DIGITAL_IN, ir_rx);
-server.log("Pin 2 resting at "+hardware.pin2.read());
+// instatiate an IR receiver and supply it with the name of the agent callback to call on a new code
+learn <- IR_receiver(hardware.pin2, 1, "newcode");
 
 imp.wakeup(1.0, function() {
 	// start the temp polling loop
