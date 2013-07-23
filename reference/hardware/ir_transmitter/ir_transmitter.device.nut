@@ -39,23 +39,23 @@ class IR_transmitter {
  	 * The timing for the start pulse, marker pulses, and 1/0 time will vary from device to device. */
 
  	// Times for start pulse (in microseconds)
-	START_TIME_HIGH 			= 4500.0;
-	START_TIME_LOW				= 4500.0;
+	START_TIME_HIGH 			= 3300.0;
+	START_TIME_LOW				= 1700.0;
 
 	/* Pulses are non-information bearing; the bit is encoded in the break after each pulse.
 	 * PULSE_TIME sets the width of the pulse in microseconds. */
-	PULSE_TIME 					= 600.0;
+	PULSE_TIME 					= 420.0;
 
 	// Time between pulses to mark a "1" (in microseconds)
-	TIME_LOW_1					= 1700.0;
+	TIME_LOW_1					= 1200.0;
 	// Time between pulses to mark a "0" (in microseconds)
-	TIME_LOW_0					= 600.0;
+	TIME_LOW_0					= 420.0;
 
 	// PWM carrier frequency (typically 38 kHz in US, some devices use 56 kHz, especially in EU)
 	CARRIER 					= 38000.0;
 
 	// Number of times to repeat a code when sending
-	CODE_REPEATS  				= 4;
+	CODE_REPEATS  				= 2;
 
 	// Time to wait (in seconds) between code sends when repeating
 	PAUSE_BETWEEN_SENDS 		= 0.05;
