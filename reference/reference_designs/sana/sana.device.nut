@@ -651,7 +651,7 @@ class IR_receiver {
 		disable();
 		imp.wakeup(IR_RX_DISABLE, enable.bindenv(this));
 
-		server.log("Got new IR Code ("+newcode.len()+"): "+newcode);
+		//server.log("Got new IR Code ("+newcode.len()+"): "+newcode);
 		agent.send(agent_callback, newcode);
 	}
 

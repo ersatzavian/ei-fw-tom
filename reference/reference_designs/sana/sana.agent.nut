@@ -109,9 +109,12 @@ codes <- {
 	}
 }
 
+selectedTarget <- "SAMSUNG_AA59_00600A";
+
 device.on("newcode", function(newcode) {
-	now = time();
+	local now = time();
 	codes.UNKNOWN.now <- newcode;
+	server.log("Got new IR Code ("+newcode.len()+"): "+newcode);
 });
 
 http.onrequest(function(request, res) {
@@ -126,18 +129,37 @@ http.onrequest(function(request, res) {
     	server.log(format("Agent Requested to send code, length "+code.len()));
     	res.send(200, "OK\n");
     	device.send("send_code",code);
-    } else if (request.path == "/settiming") {
-    	
-    	local targetdevice = request.body;
-    	
-    	if (targetdevice in codes) {
-    		server.log("Instructing Device to set timing for "+targetdevice);
-    		device.send("set_timing", codes[targetdevice]);
-       		res.send(200, "OK\n");
-    	} else {
-    		res.send(204, "No codes known for device "+targetdevice);
+
+    } else if (request.path == "/listdevices") {
+    	local responsestr = "";
+    	foreach(key, value in codes) {
+    		responsestr += (key+"\n");
     	}
-    	
+    	res.send(200, responsestr);
+    } else if (request.path == "/selectdev") {
+    	local targetdevice = request.body;
+
+    	if (targetdevice in codes) {
+    		server.log("Selecting Target Device: "+targetdevice);
+    		selectedTarget = targetdevice;
+    		device.send("set_timing", codes[targetdevice]);
+    		res.send(200, "Selected Target Device: "+selectedTarget+"\n");
+    	} else {
+    		res.send(204, "Target device "+targetdevice+" is unknown.\n");
+    	}
+
+    } else if (request.path == "/getselecteddev") {
+    	res.send(200, selectedTarget+"\n");
+    } else if (request.path == "/sendcmd") {
+    	local cmd = request.body;
+
+    	if (cmd in codes[selectedTarget]) {
+    		device.send("send_code", codes[selectedTarget][cmd]);
+    		res.send(200, "Sent Command "+cmd+" to target device "+selectedTarget+".\n");
+    	} else {
+    		res.send(204, "No command "+cmd+" for target device "+selectedTarget+".\n");
+    	}
+
     } else {
         // send a generic response to prevent browser hang
         res.send(200, "OK\n");
