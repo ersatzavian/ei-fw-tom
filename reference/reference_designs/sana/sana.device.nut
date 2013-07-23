@@ -28,13 +28,6 @@ const BTNINTERVAL 			= 0.15;
 // temp measurement interval;
 const TMPINTERVAL 			= 60.0;
 
-// IR Code transmit times in microseconds
-const START_TIME_HIGH 		= 4500;
-const START_TIME_LOW		= 4500;
-const PULSE_TIME 			= 600;
-const TIME_LOW_1			= 1700;
-const TIME_LOW_0			= 600;
-
 /* Class and Function Definitions -------------------------------------------*/
 
 /*
@@ -558,8 +551,6 @@ class tmp112 {
  * For more information on Differential Pulse Position Modulation, see
  * http://learn.adafruit.com/ir-sensor
  *
- * Input: 
- *
  */
 class IR_receiver {
 
@@ -726,87 +717,177 @@ class IR_receiver {
 	}
 }
 
-/* 
- * Send an IR Code over the IR LED 
- * 
- * Input: 
- * 		IR Code (string). Each bit is represented by a literal character in the string.
- *			Example: "111000001110000001000000101111111"
- * 			Both states are represented by a fixed-width pulse, followed by a low time which varies to 
- * 			indicate the state. 
+/*
+ * Generic Class to send IR Remote Control Codes
+ * Useful for:
+ * 		- TV Remotes
+ *		- Air conditioner / heater units
+ * 		- Fans / remote-control light fixtures
+ *		- Other things not yet attempted!
+ * For more information on Differential Pulse Position Modulation, see
+ * http://learn.adafruit.com/ir-sensor
  *
- * Return:
- * 		None
  */
-function send_IR_code (code) {
-	server.log("Sending Code, len = "+code.len());
-	// make sure pwm carrier is disabled
-	pwm.write(0.0);
-	local clkrate = 1000.0 * spi.configure(0,234);
-	local bytetime = 8 * (1.0/clkrate);
-	server.log(format("Clock Rate %d, Byte Time %.6f",clkrate, bytetime));
+class IR_transmitter {
 
-	// calculate the number of bytes we need to send each signal
-	local start_bytes_high = (START_TIME_HIGH / bytetime).tointeger();
-	local start_bytes_low =  (START_TIME_LOW / bytetime).tointeger();
-	local pulse_bytes = (PULSE_TIME / bytetime).tointeger();
-	local bytes_1 = (TIME_LOW_1 / bytetime).tointeger();
-	local bytes_0 = (TIME_LOW_0 / bytetime).tointeger();
-	server.log(format("%d pulse bytes, %d ON bytes, %d OFF bytes",pulse_bytes, bytes_1, bytes_0));
+ 	/* The following variables set the timing for the transmitter and can be overridden in the constructor. 
+ 	 * The timing for the start pulse, marker pulses, and 1/0 time will vary from device to device. */
 
-	local code_blob = blob(pulse_bytes); // blob will grow as it is written
+ 	// Times for start pulse (in microseconds)
+	START_TIME_HIGH 			= 4500.0;
+	START_TIME_LOW				= 4500.0;
 
-	// Write the start sequence into the blob
-	for (local i = 0; i < start_bytes_high; i++) {
-		code_blob.writen(0xFF, 'b');
+	/* Pulses are non-information bearing; the bit is encoded in the break after each pulse.
+	 * PULSE_TIME sets the width of the pulse in microseconds. */
+	PULSE_TIME 					= 600.0;
+
+	// Time between pulses to mark a "1" (in microseconds)
+	TIME_LOW_1					= 1700.0;
+	// Time between pulses to mark a "0" (in microseconds)
+	TIME_LOW_0					= 600.0;
+
+	// PWM carrier frequency (typically 38 kHz in US, some devices use 56 kHz, especially in EU)
+	CARRIER 					= 38000.0;
+
+	// Number of times to repeat a code when sending
+	CODE_REPEATS  				= 4;
+
+	// Time to wait (in seconds) between code sends when repeating
+	PAUSE_BETWEEN_SENDS 		= 0.05;
+
+	spi = null;
+	pwm = null;
+
+	/* 
+	 * Instantiate a new IR_transmitter
+	 *
+	 * Input: 
+	 * 		_spi (spi object): SPI bus to use when sending codes
+	 * 		_pwm (pin object): PWM-capable pin object
+	 *
+	 * The objects will be configured when this.send() is called.
+	 */
+	constructor(_spi, _pwm) {
+		this.spi = _spi;
+		this.pwm = _pwm;
 	}
-	for (local i = 0; i < start_bytes_low; i++) {
-		code_blob.writen(0x00, 'b');
-	}
 
-	// now encode each bit in the code
-	foreach (bit in code) {
-		//server.log(bit);
-		// this will be set when we figure out if this bit in the code is high or low
-		local low_bytes = 0;
-		// first, encode the pulse (same for both states)aa
-		for (local j = 0; j < pulse_bytes; j++) {
-			code_blob.writen(0xFF,'b');
-		}
+	/* 
+	 * Send an IR Code over the IR LED 
+	 * 
+	 * Input: 
+	 * 		IR Code (string). Each bit is represented by a literal character in the string.
+	 *			Example: "111000001110000001000000101111111"
+	 * 			Both states are represented by a fixed-width pulse, followed by a low time which varies to 
+	 * 			indicate the state. 
+	 *
+	 * Return:
+	 * 		None
+	 */
+	function send(code) {
 
-		// now, figure out if the bit is high or low
-		// ascii code for "1" is 49 ("0" is 48)
-		if (bit == 49) {
-			//server.log("Encoding 1");
-			low_bytes = bytes_1;
-		} else {
-			//server.log("Encoding 0");
-			low_bytes = bytes_0;
-		}
-
-		// write the correct number of low bytes to the blob, then check the next bit
-		for (local k = 0; k < low_bytes; k++) {
-			code_blob.writen(0x00,'b');
-		}
-	}
-		
-	// the code is now written into the blob. Time to send it. 
-
-	// enable PWM carrier
-	pwm.write(0.5);
-
-	// send code four times
-	for (local i = 0; i < 4; i++) {
-		spi.write(code_blob);
+		/* Configure the SPI and PWM for each send. 
+		 * This ensures that they're not in an unknown state if reconfigured by other code between sends */
+		this.pwm.configure(PWM_OUT, 1.0/CARRIER, 0.0);
+		local clkrate = 1000.0 * spi.configure(SIMPLEX_TX,117);
+		local bytetime = 8 * (1000000.0/clkrate);
+		// ensure SPI lines are low
 		spi.write("\x00");
-		imp.sleep(0.046);
+
+		// calculate the number of bytes we need to send each signal
+		local start_bytes_high = (START_TIME_HIGH / bytetime).tointeger();
+		local start_bytes_low =  (START_TIME_LOW / bytetime).tointeger();
+		local pulse_bytes = (PULSE_TIME / bytetime).tointeger();
+		local bytes_1 = (TIME_LOW_1 / bytetime).tointeger();
+		local bytes_0 = (TIME_LOW_0 / bytetime).tointeger();
+
+		local code_blob = blob(pulse_bytes); // blob will grow as it is written
+
+		// Write the start sequence into the blob
+		for (local i = 0; i < start_bytes_high; i++) {
+			code_blob.writen(0xFF, 'b');
+		}
+		for (local i = 0; i < start_bytes_low; i++) {
+			code_blob.writen(0x00, 'b');
+		}
+
+		// now encode each bit in the code
+		foreach (bit in code) {
+			// this will be set when we figure out if this bit in the code is high or low
+			local low_bytes = 0;
+			// first, encode the pulse (same for both states)aa
+			for (local j = 0; j < pulse_bytes; j++) {
+				code_blob.writen(0xFF,'b');
+			}
+
+			// now, figure out if the bit is high or low
+			// ascii code for "1" is 49 ("0" is 48)
+			if (bit == 49) {
+				//server.log("Encoding 1");
+				low_bytes = bytes_1;
+			} else {
+				//server.log("Encoding 0");
+				low_bytes = bytes_0;
+			}
+
+			// write the correct number of low bytes to the blob, then check the next bit
+			for (local k = 0; k < low_bytes; k++) {
+				code_blob.writen(0x00,'b');
+			}
+		}
+			
+		// the code is now written into the blob. Time to send it. 
+
+		// enable PWM carrier
+		pwm.write(0.5);
+
+		// send code as many times as we've specified
+		for (local i = 0; i < CODE_REPEATS; i++) {
+			spi.write(code_blob);
+			// clear the SPI bus
+			spi.write("\x00");
+			imp.sleep(PAUSE_BETWEEN_SENDS);
+		}
+		
+		// disable pwm carrier
+		pwm.write(0.0);
+		// clear the SPI lines
+		spi.write("\x00");
 	}
-	
-	// disable pwm carrier
-	pwm.write(0.0);
-	server.log("Sent Codes to TV.");
-	// clear the SPI lines
-	spi.write("\x00");
+
+	/* 
+	 * Update the timing parameters of the IR_transmitter.
+	 *
+	 * This is generally necessary when switching between devices or device manufacturers, 
+	 * 	as different implementations use different timing.
+	 *
+	 * Input: 
+	 * 		_start_time_high: (integer) High time of start pulse, in microseconds
+	 *		_start_time_low:  (integer) Low time of start pulse, in microseconds
+	 * 		_pulse_time: 	  (integer) High time (non-data-bearing) of marker pulses, in microseconds
+	 * 		_time_low_1: 	  (integer) Low time after marker pulse to designate a 1, in microseconds
+	 * 		_time_low_0: 	  (integer) Low time after marker pulse to designate a 0, in microseconds
+	 * 		_carrier: 		  (integer) Carrier frequency for the IR signal, in Hz
+	 * 		_code_repeats: 	  (integer) Number of times to repeat a code when sending
+	 * 		_pause: 		  (float) 	Time to pause between code sends when repeating (in seconds)
+	 *
+	 */
+	function set_timing(_start_time_high, _start_time_low, _pulse_time, _time_low_1, _time_low_0, 
+		_carrier, _code_repeats, _pause) {
+
+	 	START_TIME_HIGH 	= _start_time_high * 1.0;
+	  	START_TIME_LOW 		= _start_time_low * 1.0;
+
+	  	PULSE_TIME 			= _pulse_time * 1.0;
+
+	  	TIME_LOW_1 			= _time_low_1 * 1.0;
+	  	TIME_LOW_0 			= _time_low_0 * 1.0;
+
+	  	CARRIER 			= _carrier * 1.0;
+
+	  	CODE_REPEATS 		= _code_repeats;
+	  	PAUSE_BETWEEN_SENDS = _pause;
+	 }
 }
 
 function poll_btn() {
@@ -833,24 +914,26 @@ function poll_temp() {
 /* AGENT CALLBACKS ----------------------------------------------------------*/
 
 agent.on("send_code", function(code) {
-	send_IR_code(code);
+	sender.send(code);
+	server.log("Code sent.");
+});
+
+agent.on("set_timing", function(target) {
+	/*
+	server.log("Device: got new target device information");
+	foreach (key, value in target) {
+		server.log(key+" : "+value);
+	}
+	*/
+	sender.set_timing(target.START_TIME_HIGH, target.START_TIME_LOW, target.PULSE_TIME, target.TIME_LOW_1,
+		target.TIME_LOW_0, target.CARRIER, 4, target.PAUSE_BETWEEN_SENDS);
+	server.log("Device timing set.");
 });
 
 /* RUNTIME STARTS HERE ------------------------------------------------------*/
 
 imp.configure("Sana",[],[]);
 imp.enableblinkup(true);
-
-// initialize SPI bus to send codes
-spi <- hardware.spi257;
-// SPI257 minimum clock rate is 234 kHz
-server.log("SPI Running at "+spi.configure(0, 234)+" kHz");
-
-// pwm carrier signal
-pwm <- hardware.pin1;
-pwm.configure(PWM_OUT, 1.0/38000.0, 0.0);
-spi.configure(0,234);
-spi.write("\x00");
 
 // instantiate sensor classes
 t_analog <- thermistor(hardware.pinA, 4250, 298.15, 10000.0, 2);
@@ -861,8 +944,11 @@ t_digital.reset();
 btn <- hardware.pin6;
 btn.configure(DIGITAL_IN_PULLUP);
 
-// instatiate an IR receiver and supply it with the name of the agent callback to call on a new code
+// instantiate an IR receiver and supply it with the name of the agent callback to call on a new code
 learn <- IR_receiver(hardware.pin2, 1, "newcode");
+
+// instantiate an IR transmitter
+sender <- IR_transmitter(hardware.spi257, hardware.pin1);
 
 imp.wakeup(1.0, function() {
 	// start the temp polling loop

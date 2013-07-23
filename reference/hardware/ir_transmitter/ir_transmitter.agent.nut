@@ -22,9 +22,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SO
  * tom@electricimp.com
  */
 
-server.log("Sana Agent Running at "+http.agenturl());
+ server.log("Agent Running at "+http.agenturl());
 
-codes <- {
+ codes <- {
 	SAMSUNG_AA59_00600A = {
 		START_TIME_HIGH 	= 4500,
 		START_TIME_LOW 		= 4500,
@@ -108,11 +108,6 @@ codes <- {
 
 	}
 }
-
-device.on("newcode", function(newcode) {
-	now = time();
-	codes.UNKNOWN.now <- newcode;
-});
 
 http.onrequest(function(request, res) {
     server.log("Agent got new HTTP Request");
