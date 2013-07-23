@@ -49,7 +49,9 @@ class thermistor {
 	p_therm 		= null;
 	points_per_read = null;
 
-	constructor(pin, b, t0, r, points = 10) {
+	high_side_therm = null;
+
+	constructor(pin, b, t0, r, points = 10, _high_side_therm = true) {
 		this.p_therm = pin;
 		this.p_therm.configure(ANALOG_IN);
 
@@ -58,6 +60,8 @@ class thermistor {
 		this.t0_therm = t0 * 1.0;
 		this.r0_therm = r * 1.0;
 		this.points_per_read = points * 1.0;
+
+		this.high_side_therm = _high_side_therm;
 	}
 
 	// read thermistor in Kelvin
@@ -70,7 +74,13 @@ class thermistor {
 		}
 		local vdda = (vdda_raw / points_per_read);
 		local v_therm = (vtherm_raw / points_per_read) * (vdda / 65535.0);
-		local r_therm = r0_therm / ( (vdda / v_therm) - 1 );
+		
+		if (high_side_therm) {
+			local r_therm = (vdda - v_therm) * (r0_therm / v_therm);
+		} else {
+			local r_therm = r0_therm / ((vdda / v_therm) - 1);
+		}
+
 		local ln_therm = math.log(r0_therm / r_therm);
 		local t_therm = (t0_therm * b_therm) / (b_therm - t0_therm * ln_therm);
 		return t_therm;
@@ -557,17 +567,17 @@ class IR_receiver {
 	/* Receiver Thresholds in us. Inter-pulse times < THRESH_0 are zeros, 
 	 * while times > THRESH_0 but < THRESH_1 are ones, and times > THRESH_1 
 	 * are either the end of a pulse train or the start pulse at the beginning of a code */
-	THRESH_0					= 1000;
-	THRESH_1					= 2000;
+	THRESH_0					= 600;
+	THRESH_1					= 1500;
 
 	/* IR Receive Timeouts
 	 * IR_RX_DONE is the max time to wait after a pulse before determining that the 
 	 * pulse train is complete and stopping the reciever. */
-	IR_RX_DONE					= 6000; // us
+	IR_RX_DONE					= 4000; // us
 
 	/* IR_RX_TIMEOUT is an overall timeout for the receive loop. Prevents the device from
 	 * locking up if the IR signal continues to oscillate for an unreasonable amount of time */
-	IR_RX_TIMEOUT 				= 1000; // ms
+	IR_RX_TIMEOUT 				= 1500; // ms
 
 	/* The receiver is disabled between codes to prevent firing the callback multiple times (as 
 	 * most remotes send the code multiple times per button press). IR_RX_DISABLE determines how
@@ -592,8 +602,11 @@ class IR_receiver {
 	 * so it must be defined before the constructor.
 	 */
 	function receive() {
+
 		// Code is stored as a string of 1's and 0's as the pulses are measured.
-		local newcode = "";
+		local newcode = array(256);
+		local index = 0;
+
 		local last_state = rx_pin.read();
 		local duration = 0;
 
@@ -611,7 +624,7 @@ class IR_receiver {
 			/* determine if pin has changed state since last read
 			 * get a timestamp in case it has; we don't want to wait for code to execute before getting the
 			 * timestamp, as this will make the reading less accurate. */
-			state = hardware.pin2.read();
+			state = rx_pin.read();
 			now = hardware.micros();
 
 			if (state == last_state) {
@@ -628,13 +641,12 @@ class IR_receiver {
 			if (state != IR_IDLE_STATE) {
 				// the low time just ended. Measure it and add to the code string
 				duration = now - last_change_time;
+				
 				if (duration < THRESH_0) {
-					newcode += "0";
+					newcode[index++] = 0;
 				} else if (duration < THRESH_1) {
-					newcode += "1";
-				} else {
-					// this was the start pulse; ignore
-				}
+					newcode[index++] = 1;
+				} 
 			}
 
 			last_state = state;
@@ -645,14 +657,14 @@ class IR_receiver {
 		}
 
 		// codes have to end with a 1, effectively, because of how they're sent
-		newcode += "1";
+		newcode[index++] = 1;
 
 		// codes are sent multiple times, so disable the receiver briefly before re-enabling
 		disable();
 		imp.wakeup(IR_RX_DISABLE, enable.bindenv(this));
 
-		//server.log("Got new IR Code ("+newcode.len()+"): "+newcode);
-		agent.send(agent_callback, newcode);
+		local result = stringify(newcode, index);
+		agent.send(agent_callback, result);
 	}
 
 	/* 
@@ -715,6 +727,14 @@ class IR_receiver {
 	function disable() {
 		rx_pin.configure(DIGITAL_IN);
 	}
+
+	function stringify(data, len) {
+		local result = "";
+		for (local i = 0; i < len; i++) {
+			result += format("%d",data[i]);
+		}
+		return result;
+	}
 }
 
 /*
@@ -734,23 +754,23 @@ class IR_transmitter {
  	 * The timing for the start pulse, marker pulses, and 1/0 time will vary from device to device. */
 
  	// Times for start pulse (in microseconds)
-	START_TIME_HIGH 			= 4500.0;
-	START_TIME_LOW				= 4500.0;
+	START_TIME_HIGH 			= 3300.0;
+	START_TIME_LOW				= 1700.0;
 
 	/* Pulses are non-information bearing; the bit is encoded in the break after each pulse.
 	 * PULSE_TIME sets the width of the pulse in microseconds. */
-	PULSE_TIME 					= 600.0;
+	PULSE_TIME 					= 420.0;
 
 	// Time between pulses to mark a "1" (in microseconds)
-	TIME_LOW_1					= 1700.0;
+	TIME_LOW_1					= 1200.0;
 	// Time between pulses to mark a "0" (in microseconds)
-	TIME_LOW_0					= 600.0;
+	TIME_LOW_0					= 420.0;
 
 	// PWM carrier frequency (typically 38 kHz in US, some devices use 56 kHz, especially in EU)
 	CARRIER 					= 38000.0;
 
 	// Number of times to repeat a code when sending
-	CODE_REPEATS  				= 4;
+	CODE_REPEATS  				= 2;
 
 	// Time to wait (in seconds) between code sends when repeating
 	PAUSE_BETWEEN_SENDS 		= 0.05;
@@ -896,7 +916,6 @@ function poll_btn() {
 		// button released
 	} else {
 		server.log("Button Pressed");
-		recordIR();
 	}
 }
 
@@ -915,7 +934,7 @@ function poll_temp() {
 
 agent.on("send_code", function(code) {
 	sender.send(code);
-	server.log("Code sent.");
+	server.log("Code sent ("+code.len()+").");
 });
 
 agent.on("set_timing", function(target) {
