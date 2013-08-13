@@ -99,6 +99,11 @@ http.onrequest(function(request, res) {
     	// send the table containing dimensions and image data to the device
     	device.send("image", imageData);
     	log("New Image sent to device.");
+    } else if (request.path == "/clear") {
+    	res.send(200, "OK\n");
+
+    	device.send("clear", 0);
+    	log("Requesting Screen Clear.");
     } else {
     	log("Agent got unknown request");
     	res.send(200, "OK\n");

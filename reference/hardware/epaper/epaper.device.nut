@@ -1,4 +1,4 @@
-// RePaper E-Ink Display
+// E-Ink Display
 
 // Add "device" tag to logs to differentiate from agent logs
 function log(msg) {
@@ -6,9 +6,9 @@ function log(msg) {
 }
 
 
-class rePaper {
+class epaper {
     /*
-     * class to drive rePaper epaper display
+     * class to drive epaper display
      * http://repaper.org
      */
 
@@ -68,7 +68,7 @@ class rePaper {
         // As it turns out, the ePaper display is content with 4 MHz to 12 MHz, all of which are ok with the flash
         // Furthermore, the display seems to work just fine at 15 MHz. 
         this.spi = spi;
-        server.log("Display Running at: "+this.spi.configure(CLOCK_IDLE_LOW | MSB_FIRST, 15000)+" kHz");
+        server.log("Display Running at: "+this.spi.configure(CLOCK_IDLE_LOW | MSB_FIRST, 7500)+" kHz");
         this.epd_cs_l = epd_cs_l; 
         this.epd_cs_l.configure(DIGITAL_OUT);
         this.epd_cs_l.write(1);
@@ -112,18 +112,19 @@ class rePaper {
     function writeEPD(index, ...) {
         epd_cs_l.write(1);                      // CS = 1
         epd_cs_l.write(0);                      // CS = 0
+        imp.sleep(0.00001);
         spi.write(format("%c%c", 0x70, index)); // Write header, then register index
         epd_cs_l.write(1);                      // CS = 1
+        imp.sleep(0.00001);
         epd_cs_l.write(0);                      // CS = 0    
         spi.write(format("%c", 0x72));          // Write data header
-        foreach (datum in vargv) {
-            spi.write(format("%c", datum));     // then register data
+        foreach (word in vargv) {
+            spi.write(format("%c", word));     // then register data
         }
         epd_cs_l.write(1);                      // CS = 1
     }
 
-    // Power on COG Driver
-    function start() {
+    function on() {
         server.log("Device: Powering On EPD.");
 
         /* POWER-ON SEQUENCE ------------------------------------------------*/
@@ -156,19 +157,22 @@ class rePaper {
         imp.sleep(0.005);
 
         // send reset pulse
-        epd_cs_l.write(0);
+        rst_l.write(0);
         imp.sleep(0.005);
-        epd_cs_l.write(1);  
+        rst_l.write(1);  
+        imp.sleep(0.005);
 
-        // Wait for screen to be ready (dunno if this works)
+        // Wait for screen to be ready
         while (busy.read()) {
             server.log("Device: Waiting for COG Driver to Power On...");
-            imp.sleep(0.5);
+            imp.sleep(0.005);
         }
 
         server.log("Device: COG Driver Powered On");
+    }
 
-        /* INITIALIZATION SEQUENCE ------------------------------------------*/
+    function init() {
+       /* INITIALIZATION SEQUENCE ------------------------------------------*/
         server.log("Device: Initializing EPD.");
 
         // Channel Select
@@ -191,6 +195,7 @@ class rePaper {
                 return;
         }
 
+
         // DC/DC Frequency Setting
         writeEPD(0x06, 0xFF);
 
@@ -209,10 +214,8 @@ class rePaper {
         } else {
             writeEPD(0x04, 0x03);    
         }
-        
-        imp.sleep(0.005);
 
-        // Driver latch on (cancel register noise)
+        // Driver latch on ("cancel register noise")
         writeEPD(0x03, 0x01);
 
         // Driver latch off
@@ -226,7 +229,11 @@ class rePaper {
         
         // Stop PWM
         pwm.write(0.0);
-        
+
+        // VDH and VGH rails take over a second to come up to ~12-15V. 
+        // Give them a chance or the screen won't print.
+        //imp.sleep(1.0);
+
         // Start charge pump negative voltage
         writeEPD(0x05, 0x03);
         imp.sleep(0.030);
@@ -234,10 +241,16 @@ class rePaper {
         // Set charge pump Vcom driver to ON
         writeEPD(0x05, 0x0F);
 
-        // Output "enable to disable", whatever that means
+        // "Output enable to disable" (docs grumble grumble)
         writeEPD(0x02, 0x24);
 
-        server.log("Device: COG Driver Initialized.");
+        server.log("Device: COG Driver Initialized."); 
+    }
+
+    // Power on COG Driver
+    function start() {
+        on();
+        init();
     }
 
     // Power off COG Driver
@@ -294,19 +307,20 @@ class rePaper {
         writeEPD(0x04, 0x00);
         imp.sleep(0.040);
 
-        // ensure MOSI is low before CS Low
-        spi.write(format("%c",0x00)); 
-        epd_cs_l.write(0);
-
         // turn off all power and set all inputs low
         rst_l.write(0);
         panel.write(0);
         border.write(0);
 
+        // ensure MOSI is low before CS Low
+        spi.write(format("%c",0x00)); 
+        imp.sleep(0.00001);
+        epd_cs_l.write(0);
+
         // send discharge pulse
         discharge.write(1);
         server.log("Device: Discharging Rails");
-        imp.sleep(0.25);
+        imp.sleep(0.15);
         discharge.write(0);
 
         server.log("Device: Display Powered Down.");
@@ -326,8 +340,9 @@ class rePaper {
         
         // Send index "0x0A" and keep CS asserted
         epd_cs_l.write(0);                      // CS = 0
-        spi.write(format("%c%c", 0x70, 0x0A)); // Write header, then register index
+        spi.write(format("%c%c", 0x70, 0x0A));  // Write header, then register index
         epd_cs_l.write(1);                      // CS = 1
+        imp.sleep(0.00001);
         epd_cs_l.write(0);                      // CS = 0   
         linedata.writen(0x72, 'b');
 
@@ -352,9 +367,7 @@ class rePaper {
 
         // null byte to end each line
         linedata.writen(0x00,'b');
-
         spi.write(linedata);
-
         epd_cs_l.write(1);
 
         // Turn on output enable
@@ -402,7 +415,7 @@ class rePaper {
      *  +30C -> 1.940V
      * +100C -> 1.145V
      */
-     function getTemp() {
+    function getTemp() {
         local rawTemp = 0;
         local rawVdda = 0;
         // Take 10 readings and average for accuracy
@@ -431,6 +444,13 @@ agent.on("image", function(imageData) {
     display.stop();
 });
 
+agent.on("clear", function(val) {
+    log("Agent asked to clear screen. Clearing.");
+    display.start();
+    display.clear();
+    display.stop();
+});
+
 /* RUNTIME BEGINS HERE ------------------------------------------------------*/
 
 /*
@@ -456,18 +476,17 @@ const displayHeight = 96;
 // flash_cs_l  <- hardware.pinE;   // Flash Chip Select (active low)
 
 // ePaper(WIDTH, HEIGHT, SPI_IFC, EPD_CS_L, BUSY, TEMPSENSE, PWM, RESET, PANEL_ON, DISCHARGE, BORDER)
-display <- rePaper(displayWidth, displayHeight, hardware.spi257, hardware.pin1, hardware.pin6, hardware.pin8,
+display <- epaper(displayWidth, displayHeight, hardware.spi257, hardware.pin1, hardware.pin6, hardware.pin8,
     hardware.pin9, hardware.pinA, hardware.pinB, hardware.pinC, hardware.pinD);
 
 log("Classes instantiated, memory: "+imp.getmemoryfree());
 log("Display is "+display.WIDTH+" x "+display.HEIGHT+" px ("+display.BYTESPERSCREEN+" bytes).");
 
-/*
+log(format("Temperature: %.2f C",display.getTemp()));
+
 display.start();
+//display.start();
 display.clear();
 display.stop();
-*/
-
-log(format("Temperature: %.2f C",display.getTemp()));
 
 log("Done.");
