@@ -85,7 +85,7 @@ class epaper {
         this.tempsense.configure(ANALOG_IN);
 
         this.pwm = pwm;
-        this.pwm.configure(PWM_OUT, 1/200000.0, 0.0);
+        this.pwm.configure(PWM_OUT, 1/200000, 0.0);
 
         this.rst_l = rst_l;
         this.rst_l.configure(DIGITAL_OUT);
@@ -153,7 +153,7 @@ class epaper {
         /* POWER-ON SEQUENCE ------------------------------------------------*/
 
         // make sure SPI is low to avoid back-powering things through the SPI bus
-        this.spiOff();
+        this.spiOn();
 
         // Make sure signals start unasserted (rest, panel-on, discharge, border, cs)
         this.rst_l.write(0);
@@ -190,9 +190,6 @@ class epaper {
             log("Waiting for COG Driver to Power On...");
             imp.sleep(0.005);
         }
-        
-        // turn SPI "on" (switch to clock idle high)
-        this.spiOn();
 
         // Channel Select
         switch(this.WIDTH) {
@@ -304,7 +301,7 @@ class epaper {
         this.writeEPD(0x05, 0x02);
 
         // discharge
-        this.writeEPD(0x04, 0x0c);
+        writeEPD(0x04, 0x0c);
 
         imp.sleep(0.120);
 
@@ -414,7 +411,7 @@ class epaper {
     // repet drawing for the temperature compensated stage time
     function drawScreenCompensated(screenData) {
         local stageTime = this.stageTime * this.temperatureToFactor(this.getTemp());
-        log("drawScreenCompensated t = " + stageTime + " ms");
+        //log("drawScreenCompensated t = " + stageTime + " ms");
         local start_time = hardware.millis();
         while (stageTime > 0) {
             this.drawScreen(screenData);
@@ -521,8 +518,8 @@ agent.on("clear", function(val) {
  * 2.0"  = 200 x 96  px
  * 2.7"  = 264 x 176 px
  */
-const displayWidth  = 264;
-const displayHeight = 176;
+const displayWidth  = 200;
+const displayHeight = 96;
 
 // Pin configuration
 // epd_cs_l    <- hardware.pin1;   // EPD Chip Select (active-low)
