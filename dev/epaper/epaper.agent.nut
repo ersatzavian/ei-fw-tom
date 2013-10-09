@@ -1,16 +1,36 @@
-// Epaper Agent
+/*
+Copyright (C) 2013 electric imp, inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software 
+and associated documentation files (the "Software"), to deal in the Software without restriction, 
+including without limitation the rights to use, copy, modify, merge, publish, distribute, 
+sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is 
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial 
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, 
+INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE 
+AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, 
+DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, 
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+*/
+
+/* 
+ * Epaper Agent Firmware
+ * Tom Byrne
+ * tom@electricimp.com
+ * 10/9/2013
+ */
 
 server.log("Agent Running at "+http.agenturl());
-
-function log(msg) {
-    server.log("Agent: "+msg);
-}
 
 /*
  * Input: WIF image data (blob)
  *
  * Return: image data (table)
- *     		.height: height in pixels
+ *         	.height: height in pixels
  * 			.width:  width in pixels
  * 			.data:   image data (blob)
  */
@@ -22,7 +42,7 @@ function unpackWIF(packedData) {
 	local retVal = {height = null, width = null, data = blob(datalen*2)};
 	retVal.height = packedData.readn('w');
 	retVal.width = packedData.readn('w');
-	log("Unpacking WIF Image, Height = "+retVal.height+" px, Width = "+retVal.width+" px");
+	server.log("Unpacking WIF Image, Height = "+retVal.height+" px, Width = "+retVal.width+" px");
 
 	/*
 	 * Unpack WIF for RePaper Display
@@ -71,7 +91,7 @@ function unpackWIF(packedData) {
 		} // end of col
 	} // end of row
 
-	log("Done Unpacking WIF File.");
+	server.log("Done Unpacking WIF File.");
 
 	return retVal;
 }
@@ -85,27 +105,27 @@ http.onrequest(function(request, res) {
     res.header("Access-Control-Allow-Headers","Origin, X-Requested-With, Content-Type, Accept");
     res.header("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
 
-    if (request.path == "/WIFimage") {
+    if (request.path == "/WIFimage" || request.path == "/WIFimage/") {
     	// return right away to keep things responsive
     	res.send(200, "OK\n");
 
     	// incoming data has to be base64decoded so we can get a blob right away
     	local data = http.base64decode(request.body);
-    	log("Got new data, len "+data.len());
+    	server.log("Got new data, len "+data.len());
 
     	// unpack the WIF image data
     	local imageData = unpackWIF(data);
 
     	// send the table containing dimensions and image data to the device
     	device.send("image", imageData);
-    	log("New Image sent to device.");
-    } else if (request.path == "/clear") {
+    	server.log("New Image sent to device.");
+    } else if (request.path == "/clear" || request.path == "/clear/") {
     	res.send(200, "OK\n");
 
     	device.send("clear", 0);
-    	log("Requesting Screen Clear.");
+    	server.log("Requesting Screen Clear.");
     } else {
-    	log("Agent got unknown request");
+    	server.log("Agent got unknown request");
     	res.send(200, "OK\n");
     }
 });
