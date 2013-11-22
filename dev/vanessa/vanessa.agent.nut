@@ -127,6 +127,29 @@ function unpackWIF(packedData) {
 	return retVal;
 }
 
+/* Determine seconds until the next occurance of a time string
+ * This example assumes California time :)
+ * 
+ * Input: Time string in 24-hour time, e.g. "20:18"
+ * 
+ * Return: integer number of seconds until the next occurance of this time
+ *
+ */
+function secondsTill(targetTime) {
+    local data = split(targetTime,":");
+    local target = { hour = data[0].tointeger(), min = data[1].tointeger() };
+    local now = date(time() - (3600 * 8));
+    
+    if ((target.hour < now.hour) || (target.hour == now.hour && target.min < now.min)) {
+        target.hour += 24;
+    }
+    
+    local secondsTill = 0;
+    secondsTill += (target.hour - now.hour) * 3600;
+    secondsTill += (target.min - now.min) * 60;
+    return secondsTill;
+}
+
 /* DEVICE EVENT HANDLERS ----------------------------------------------------*/
 
 // Tell the device how big the screen is and what it has on it when it wakes up and asks.
@@ -162,7 +185,7 @@ http.onrequest(function(request, res) {
 
     if (request.path == "/WIFimage" || request.path == "/WIFimage/") {
     	// return right away to keep things responsive
-    	res.send(200, "OK\n");
+    	res.send(200, "OK");
 
     	// incoming data has to be base64decoded so we can get a blob right away
     	local data = http.base64decode(request.body);
@@ -178,12 +201,39 @@ http.onrequest(function(request, res) {
         device.send("newImgStart",imgData.curImgInv);
         
     } else if (request.path == "/clear" || request.path == "/clear/") {
-    	res.send(200, "OK\n");
+    	res.send(200, "OK");
 
     	device.send("clear", 0);
     	server.log("Requesting Screen Clear.");
+    } else if (request.path == "/sleepfor" || request.path == "/sleepfor/") {
+        server.log("Agent asked to sleep for "+request.body+" minute(s).");
+        local sleeptime = 0;
+        try {
+            sleeptime = request.body.tointeger();
+        } catch (err) {
+            server.error("Invalid Time String Given to Sleep For: "+request.body);
+            server.error(err);
+            res.send(400, err);
+            return;
+        } 
+        // allow max sleep time of one day. Sleep time comes in in minutes.
+        if (sleeptime > 1440) { sleeptime = 1440; }
+        device.send("sleepfor", (60 * sleeptime));
+        res.send(200, format("Sleeping For %d seconds",(60 * sleeptime), request.body));
+    } else if (request.path == "/sleepuntil" || request.path == "/sleepuntil/") {
+        local sleeptime = 0;
+        try {
+            sleeptime = secondsTill(request.body);
+        } catch (err) {
+            server.error("Invalid Time String Given to Sleep Until: "+request.body);
+            server.error(err);
+            res.send(400, err);
+            return;
+        }
+        device.send("sleepfor",sleeptime);
+        res.send(200, format("Sleeping For %d seconds (until %s PST)", sleeptime, request.body));
     } else {
     	server.log("Agent got unknown request");
-    	res.send(200, "OK\n");
+    	res.send(200, "OK");
     }
 });

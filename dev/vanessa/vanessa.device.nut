@@ -25,11 +25,264 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SO
  */
 
 // SPI Clock Rate in kHz
-const SPICLK = 15000;
+const SPICLK = 7500;
 // I/O Expander 7-bit address
-const IOEXP_ADDR = 0x20;
+const IOEXP_ADDR = 0x40;
 
 /* GLOBAL CLASS AND FUNCTION DEFINITIONS ------------------------------------*/
+
+class spiFlash {
+    // MX25L3206E SPI Flash
+    // Clock up to 86 MHz (we go up to 15 MHz)
+    // device commands:
+    static WREN     = "\x06"; // write enable
+    static WRDI     = "\x04"; // write disable
+    static RDID     = "\x9F"; // read identification
+    static RDSR     = "\x05"; // read status register
+    static READ     = "\x03"; // read data
+    static FASTREAD = "\x0B"; // fast read data
+    static RDSFDP   = "\x5A"; // read SFDP
+    static RES      = "\xAB"; // read electronic ID
+    static REMS     = "\x90"; // read electronic mfg & device ID
+    static DREAD    = "\x3B"; // double output mode, which we don't use
+    static SE       = "\x20"; // sector erase (Any 4kbyte sector set to 0xff)
+    static BE       = "\x52"; // block erase (Any 64kbyte sector set to 0xff)
+    static CE       = "\x60"; // chip erase (full device set to 0xff)
+    static PP       = "\x02"; // page program 
+    static RDSCUR   = "\x2B"; // read security register
+    static WRSCUR   = "\x2F"; // write security register
+    static ENSO     = "\xB1"; // enter secured OTP
+    static EXSO     = "\xC1"; // exit secured OTP
+    static DP       = "\xB9"; // deep power down
+    static RDP      = "\xAB"; // release from deep power down
+ 
+    // offsets for the record and playback sectors in memory
+    // 64 blocks
+    // first 48 blocks: playback memory
+    // blocks 49 - 64: recording memory
+    static totalBlocks = 64;
+    static playbackBlocks = 48;
+    static recordOffset = 0x2FFFD0;
+ 
+    // manufacturer and device ID codes
+    mfgID = null;
+    devID = null;
+ 
+    // spi interface
+    spi = null;
+    cs_l = null;
+ 
+    // constructor takes in pre-configured spi interface object and chip select GPIO
+    constructor(spiBus, csPin) {
+        this.spi = spiBus;
+        this.cs_l = csPin;
+        
+        spiOn();
+ 
+        // read the manufacturer and device ID
+        cs_l.write(0);
+        spi.write(RDID);
+        local data = spi.readblob(3);
+        this.mfgID = data[0];
+        this.devID = (data[1] << 8) | data[2];
+        cs_l.write(1);
+        
+        spiOff();
+    }
+    
+    // enable SPI
+    function spiOn() {
+        local freq = this.spi.configure(CLOCK_IDLE_LOW | MSB_FIRST, SPICLK);
+        this.spi.write("\x00");
+        return freq;
+    }
+
+    // disable SPI
+    function spiOff() {
+        this.spi.write("\x00");
+        imp.sleep(0.00001);
+    }
+ 
+    function wrenable() {
+        cs_l.write(0);
+        spi.write(WREN);
+        cs_l.write(1);
+    }
+ 
+    function wrdisable() {
+        cs_l.write(0);
+        spi.write(WRDI);
+        cs_l.write(1);
+    }
+ 
+    // pages should be pre-erased before writing
+    function write(addr, data) {
+        wrenable();
+ 
+        // check the status register's write enabled bit
+        if (!(getStatus() & 0x02)) {
+            server.error("Device: Flash Write not Enabled");
+            return 1;
+        }
+ 
+        cs_l.write(0);
+        // page program command goes first
+        spi.write(PP);
+        // followed by 24-bit address
+        spi.write(format("%c%c%c", (addr >> 16) & 0xFF, (addr >> 8) & 0xFF, addr & 0xFF));
+        spi.write(data);
+        cs_l.write(1);
+ 
+        // wait for the status register to show write complete
+        // typical 1.4 ms, max 5 ms
+        local timeout = 50000; // time in us
+        local start = hardware.micros();
+        while (getStatus() & 0x01) {
+            if ((hardware.micros() - start) > timeout) {
+                server.error("Device: Timed out waiting for write to finish");
+                return 1;
+            }
+        }
+ 
+        return 0;
+    }
+ 
+    // allow data chunks greater than one flash page to be written in a single op
+    function writeChunk(addr, data) {
+        // separate the chunk into pages
+        data.seek(0,'b');
+        for (local i = 0; i < data.len(); i+=256) {
+            local leftInBuffer = data.len() - data.tell();
+            if (leftInBuffer < 256) {
+                flash.write((addr+i),data.readblob(leftInBuffer));
+            } else {
+                flash.write((addr+i),data.readblob(256));
+            }
+        }
+    }
+ 
+    function read(addr, bytes) {
+        cs_l.write(0);
+        // to read, send the read command and a 24-bit address
+        spi.write(READ);
+        spi.write(format("%c%c%c", (addr >> 16) & 0xFF, (addr >> 8) & 0xFF, addr & 0xFF));
+        local readBlob = spi.readblob(bytes);        
+        cs_l.write(1);
+        return readBlob;
+    }
+ 
+    function getStatus() {
+        cs_l.write(0);
+        spi.write(RDSR);
+        local status = spi.readblob(1);
+        cs_l.write(1);
+        return status[0];
+    }
+ 
+    function sleep() {
+        cs_l.write(0);
+        spi.write(DP);
+        cs_l.write(1);     
+   }
+ 
+    function wake() {
+        cs_l.write(0);
+        spi.write(RDP);
+        cs_l.write(1);
+    }
+ 
+    // erase any 4kbyte sector of flash
+    // takes a starting address, 24-bit, MSB-first
+    function sectorErase(addr) {
+        this.wrenable();
+        cs_l.write(0);
+        spi.write(SE);
+        spi.write(format("%c%c%c", (addr >> 16) & 0xFF, (addr >> 8) & 0xFF, addr & 0xFF));
+        cs_l.write(1);
+        // wait for sector erase to complete
+        // typ = 60ms, max = 300ms
+        local timeout = 300000; // time in us
+        local start = hardware.micros();
+        while (getStatus() & 0x01) {
+            if ((hardware.micros() - start) > timeout) {
+                server.error("Device: Timed out waiting for write to finish");
+                return 1;
+            }
+        }
+        return 0;
+    }
+ 
+    // set any 64kbyte block of flash to all 0xff
+    // takes a starting address, 24-bit, MSB-first
+    function blockErase(addr) {
+        //server.log(format("Device: erasing 64kbyte SPI Flash block beginning at 0x%06x",addr));
+        this.wrenable();
+        cs_l.write(0);
+        spi.write(BE);
+        spi.write(format("%c%c%c", (addr >> 16) & 0xFF, (addr >> 8) & 0xFF, addr & 0xFF));
+        cs_l.write(1);
+        // wait for sector erase to complete
+        // typ = 700ms, max = 2s
+        local timeout = 2000000; // time in us
+        local start = hardware.micros();
+        while (getStatus() & 0x01) {
+            if ((hardware.micros() - start) > timeout) {
+                server.error("Device: Timed out waiting for write to finish");
+                return 1;
+            }
+        }
+        return 0;
+    }
+ 
+    // clear the full flash to 0xFF
+    function chipErase() {
+        server.log("Device: Erasing SPI Flash");
+        this.wrenable();
+        cs_l.write(0);
+        spi.write(CE);
+        cs_l.write(1);
+        // chip erase takes a *while*
+        // typ = 25s, max = 50s
+        local timeout = 50000000; // time in us
+        local start = hardware.micros();
+        while (getStatus() & 0x01) {
+            if ((hardware.micros() - start) > timeout) {
+                server.error("Device: Timed out waiting for write to finish");
+                return 1;
+            }
+        }
+        server.log("Device: Done with chip erase");
+        return 0;
+    }
+ 
+    // erase the message portion of the SPI flash
+    // 2880000 bytes is 45 64-kbyte blocks
+    function erasePlayBlocks() {
+        server.log("Device: clearing playback flash sectors");
+        for(local i = 0; i < this.playbackBlocks; i++) {
+            if(this.blockErase(i*65535)) {
+                server.error(format("Device: SPI flash failed to erase block %d (addr 0x%06x)",
+                    i, i*65535));
+                return 1;
+            }
+        }
+        return 0;
+    }
+ 
+    // erase the record buffer portion of the SPI flash
+    // this is a 960000-byte sector, beginning at block 46 and going to block 60
+    function eraseRecBlocks() {
+        server.log("Device: clearing recording flash sectors");
+        for (local i = this.playbackBlocks; i < this.totalBlocks; i++) {
+            if(this.blockErase(i*65535)) {
+                server.error(format("Device: SPI flash failed to erase block %d (addr 0x%06x)",
+                    i, i*65535));
+                return 1;
+            }
+        }
+        return 0;
+    }
+}
 
 class epaper {
     /*
@@ -139,13 +392,16 @@ class epaper {
     // enable SPI
     function spiOn() {
         local freq = this.spi.configure(CLOCK_IDLE_HIGH | MSB_FIRST | CLOCK_2ND_EDGE, SPICLK);
+        //local freq = this.spi.configure(CLOCK_IDLE_HIGH | MSB_FIRST, SPICLK);
         this.spi.write("\x00");
         imp.sleep(0.00001);
+        server.log("running at "+freq);
         return freq;
     }
 
     // disable SPI
     function spiOff() {
+        //local freq = this.spi.configure(CLOCK_IDLE_LOW | MSB_FIRST, SPICLK);
         local freq = this.spi.configure(CLOCK_IDLE_LOW | MSB_FIRST | CLOCK_2ND_EDGE, SPICLK);
         this.spi.write("\x00");
         imp.sleep(0.00001);
@@ -524,184 +780,193 @@ class epaper {
     }
 }
 
-class SX1505 {
-    
-    i2cPort = null;
-    i2cAddress = null;
-    alertpin = null;
-    // callback functions {pin,callback}
-    callbacks = {};
-    
-    // I/O Expander internal registers
-    REGDATA     = 0x00;
-    REGDIR      = 0x01;
-    REGPULLUP   = 0x02;
-    REGPULLDN   = 0x03;
-    REGINTMASK  = 0x05;
-    REGSNSHI    = 0x06;
-    REGSNSLO    = 0x07;
-    REGINTSRC   = 0x08;
-    REGEVNTSTS  = 0x09;
-    REGPLDMODE  = 0x10;
-    REGPLDTBL0  = 0x11;
-    REGPLDTBL1  = 0x12;
-    REGPLDTBL2  = 0x13;
-    REGPLDTBL3  = 0x14;
-    REGPLDTBL4  = 0x15;
-    
-    function decode_callback() {
-        //server.log("Decoding Callback");
-        if (!alertpin.read()) {
-            local irqPinMask = this.readReg(REGINTSRC);
-            /*
-            server.log(format("REGINTSRC:  0x%02x",irqPinMask));
-            server.log(format("REGDATA:    0x%02x",this.readReg(REGDATA)));
-            server.log(format("REGDIR:     0x%02x",this.readReg(REGDIR)));
-            server.log(format("REGPULLUP:  0x%02x",this.readReg(REGPULLUP)));
-            server.log(format("REGPULLDN:  0x%02x",this.readReg(REGPULLDN)));
-            server.log(format("REGINTMASK: 0x%02x",this.readReg(REGINTMASK)));
-            server.log(format("REGSNSHI:   0x%02x",this.readReg(REGSNSHI)));
-            server.log(format("REGSNSLO:   0x%02x",this.readReg(REGSNSLO)));
-            server.log(format("REGEVNTSTTS:0x%02x",this.readReg(REGEVNTSTS)));
-            */
-            clearAllIrqs();
-            callbacks[irqPinMask]();   
-        }
+class SX150x{
+    //Private variables
+    _i2c       = null;
+    _addr      = null;
+    _callbacks = null;
+
+    //Pass in pre-configured I2C since it may be used by other devices
+    constructor(i2c, address = 0x40) {
+        _i2c  = i2c;
+        _addr = address;  //8-bit address
+        _callbacks = [];
     }
-    
-    constructor(port, address, alertpin) {
-        try {
-            i2cPort = port;
-            i2cPort.configure(CLOCK_SPEED_100_KHZ);
-            this.alertpin = alertpin;
-        } catch (err) {
-            server.error("Error configuring I2C for I/O Expander: "+err);
-        }
-        
-        // 7-bit addressing
-        i2cAddress = address << 1;
-        
-        // configure alert pin to figure out which callback needs to be called
-        if (alertpin) {
-            alertpin.configure(DIGITAL_IN_PULLUP,decode_callback.bindenv(this));
-        }
-        
-        // clear all IRQs just in case
-        clearAllIrqs();
-    }
-    
+
     function readReg(register) {
-        local data = i2cPort.read(i2cAddress, format("%c", register), 1);
+        local data = _i2c.read(_addr, format("%c", register), 1);
         if (data == null) {
-            server.error("I2C Read Failure");
+            server.error(format("I2C Read Failure. Device: 0x%02x Register: 0x%02x", _addr, register));
             return -1;
         }
         return data[0];
     }
     
     function writeReg(register, data) {
-        i2cPort.write(i2cAddress, format("%c%c", register, data));
+        _i2c.write(_addr, format("%c%c", register, data));
     }
     
     function writeBit(register, bitn, level) {
-        //server.log("made it to writebit");
         local value = readReg(register);
-        //server.log(format("writebit got 0x%x",value));
         value = (level == 0)?(value & ~(1<<bitn)):(value | (1<<bitn));
-        //server.log(format("writing back 0x%x",value));
         writeReg(register, value);
     }
     
     function writeMasked(register, data, mask) {
+        //server.log("reading pre-masked value");
         local value = readReg(register);
         value = (value & ~mask) | (data & mask);
         writeReg(register, value);
     }
-    // set or clear a selected GPIO pin, 0-15
+
+    // set or clear a selected GPIO pin, 0-16
     function setPin(gpio, level) {
-        writeBit(REGDATA, gpio, level ? 1 : 0);
+        writeBit(bank(gpio).REGDATA, gpio % 8, level ? 1 : 0);
     }
+
     // configure specified GPIO pin as input(0) or output(1)
     function setDir(gpio, output) {
-        //server.log("made it to setDir");
-        writeBit(REGDIR, gpio, output ? 0 : 1);
+        writeBit(bank(gpio).REGDIR, gpio % 8, output ? 0 : 1);
     }
+
     // enable or disable internal pull up resistor for specified GPIO
     function setPullUp(gpio, enable) {
-        //server.log("made it to setPullUp");
-        writeBit(REGPULLUP, gpio, enable ? 0 : 1);
+        writeBit(bank(gpio).REGPULLUP, gpio % 8, enable ? 1 : 0);
     }
+    
+    // enable or disable internal pull down resistor for specified GPIO
+    function setPullDn(gpio, enable) {
+        writeBit(bank(gpio).REGPULLDN, gpio % 8, enable ? 1 : 0);
+    }
+
     // configure whether specified GPIO will trigger an interrupt
     function setIrqMask(gpio, enable) {
-        writeBit(REGINTMASK, gpio, enable ? 0 : 1);
+        writeBit(bank(gpio).REGINTMASK, gpio % 8, enable ? 0 : 1);
     }
+
+    // clear interrupt on specified GPIO
+    function clearIrq(gpio) {
+        writeBit(bank(gpio).REGINTMASK, gpio % 8, 1);
+    }
+
+    // get state of specified GPIO
+    function getPin(gpio) {
+        return ((readReg(bank(gpio).REGDATA) & (1<<(gpio%8))) ? 1 : 0);
+    }
+
+    //configure which callback should be called for each pin transition
+    function setCallback(gpio, callback){
+        _callbacks.insert(gpio,callback);
+    }
+
+    function callback(){
+        local irq = getIrq();
+        clearAllIrqs();
+        for (local i = 0; i < 16; i++){
+            if ( (irq & (1 << i)) && (typeof _callbacks[i] == "function")){
+                _callbacks[i]();
+            }
+        }
+    }
+}
+
+class SX1505 extends SX150x{
+    // I/O Expander internal registers
+    BANK_A = {  REGDATA    = 0x00
+                REGDIR     = 0x01
+                REGPULLUP  = 0x02
+                REGPULLDN  = 0x03
+                REGINTMASK = 0x05
+                REGSNSHI   = 0x06
+                REGSNSLO   = 0x07
+                REGINTSRC  = 0x08
+            }
+
+    constructor(i2c, address=0x20){
+        base.constructor(i2c, address);
+        _callbacks.resize(8,null);
+        this.reset();
+        this.clearAllIrqs();
+    }
+    
+    //Write registers to default values
+    function reset() {
+        writeReg(BANK_A.REGDIR, 0xFF);
+        writeReg(BANK_A.REGDATA, 0xFF);
+        writeReg(BANK_A.REGPULLUP, 0x00);
+        writeReg(BANK_A.REGPULLDN, 0x00);
+        writeReg(BANK_A.REGINTMASK, 0xFF);
+        writeReg(BANK_A.REGSNSHI, 0x00);
+        writeReg(BANK_A.REGSNSLO, 0x00);
+    }
+    
+    function bank(gpio){ return BANK_A; }
+
     // configure whether edges trigger an interrupt for specified GPIO
     function setIrqEdges( gpio, rising, falling) {
         local mask = 0x03 << ((gpio & 3) << 1);
         local data = (2*falling + rising) << ((gpio & 3) << 1);
-        writeMasked(gpio >= 4 ? REGSNSHI : REGSNSLO, data, mask);
+        writeMasked(gpio >= 4 ? BANK_A.REGSNSHI : BANK_A.REGSNSLO, data, mask);
     }
-    // clear interrupt on specified GPIO
-    function clearIrq(gpio) {
-        writeBit(REGINTMASK, gpio, 1);
-    }
+
     function clearAllIrqs() {
-        writeReg(REGINTSRC,0xff);
+        writeReg(BANK_A.REGINTSRC, 0xFF);
     }
     
-    // get state of specified GPIO
-    function getPin(gpio) {
-        return ((readReg(REGDATA) & (1<<gpio)) ? 1 : 0);
+    function getIrq(){
+        return (readReg(BANK_A.REGINTSRC) & 0xFF);
     }
 }
 
-class expGpio extends SX1505 {
+class expGPIO {
+    _expander = null;  //Instance of an Expander class
+    _gpio     = null;  //Pin number of this GPIO pin
     
-    // pin number of this GPIO pin
-    gpio = null;
-    // imp pin to throw interrupt on, if configured
-    alertpin = null;
-    
-    constructor(port, address, gpio, alertpin = null) {
-        base.constructor(port, address, alertpin);
-        this.gpio = gpio;
+    constructor(expander, gpio) {
+        _expander = expander;
+        _gpio     = gpio;
     }
     
-    function configure(mode, callback = null) {
+    // Optional initial state (defaults to 0 just like the imp)
+    function configure(mode, callback_initialstate = null) {
         // set the pin direction and configure the internal pullup resistor, if applicable
         if (mode == DIGITAL_OUT) {
-            base.setDir(gpio,1);
-            base.setPullUp(gpio,0);
-        } else if (mode == DIGITAL_IN) {
-            base.setDir(gpio,0);
-            base.setPullUp(gpio,0);
-            //server.log("GPIO Expander Pin "+gpio+" Configured");
+            _expander.setDir(_gpio,1);
+            _expander.setPullUp(_gpio,0);
+            if (callback_initialstate != null) {
+                _expander.setPin(_gpio, callback_initialstate);    
+            } else {
+                _expander.setPin(_gpio, 0);
+            }
+            
+            return this;
+        }
+            
+        if (mode == DIGITAL_IN) {
+            _expander.setDir(_gpio,0);
+            _expander.setPullUp(_gpio,0);
         } else if (mode == DIGITAL_IN_PULLUP) {
-            base.setDir(gpio,0);
-            base.setPullUp(gpio,1);
+            _expander.setDir(_gpio,0);
+            _expander.setPullUp(_gpio,1);
         }
         
         // configure the pin to throw an interrupt, if necessary
-        if (callback) {
-            base.setIrqMask(gpio,1);
-            base.setIrqEdges(gpio,1,1);
-            
-            // add this callback to the base's callbacks table
-            base.callbacks[(0xff & (0x01 << gpio))] <- callback;
-            //server.log("GPIO Expander Callback added to table");
+        if (typeof callback_initialstate == "function") {
+            _expander.setIrqMask(_gpio,1);
+            _expander.setIrqEdges(_gpio,1,1);
+            _expander.setCallback(_gpio, callback_initialstate.bindenv(this));
         } else {
-            base.setIrqMask(gpio,0);
-            base.setIrqEdges(gpio,0,0);
+            _expander.setIrqMask(_gpio,0);
+            _expander.setIrqEdges(_gpio,0,0);
+            _expander.setCallback(_gpio,null);
         }
+        
+        return this;
     }
     
-    function write(state) {
-        base.setPin(gpio,state);
-    }
+    function write(state) { _expander.setPin(_gpio,state); }
     
-    function read() {
-        return base.getPin(gpio);
-    }
+    function read() { return _expander.getPin(_gpio); }
 }
 
 class thermistor {
@@ -839,6 +1104,15 @@ agent.on("clear", function(val) {
     display.stop();
 });
 
+agent.on("sleepfor", function(sleeptime) {
+    // make sure display is stopped
+    display.stop();
+    // clear pull-ups and pull-downs in I/O expander to avoid wasting power
+    ioexp.reset();
+    // go to sleep!
+    server.sleepfor(sleeptime);
+});
+
 /* The device requests its own parameters from the agent upon startup.
  * This handler finishes initializing the device when the agent responds with these parameters.
  */
@@ -853,7 +1127,7 @@ agent.on("params_res", function(res) {
      */
     
     // ePaper(WIDTH, HEIGHT, SPI_IFC, EPD_CS_L, BUSY, THERMISTOR_OBJ, PWM, RESET, PANEL_ON, DISCHARGE, BORDER)
-    display <- epaper(res.width, res.height, hardware.spi257, epd_cs_l, epd_busy, therm,
+    display <- epaper(res.width, res.height, spi, epd_cs_l, epd_busy, therm,
         pwm, epd_rst_l, epd_pwr_en_l, epd_discharge, epd_border);
 
     server.log("Device Started, free memory: " + imp.getmemoryfree());
@@ -867,11 +1141,8 @@ agent.on("params_res", function(res) {
     server.log("Ready.");
 });
 
-
 /* RUNTIME BEGINS HERE ------------------------------------------------------*/
 imp.configure("Vanessa Epaper Display",[],[]);
-imp.enableblinkup(false);
-imp.setpowersave(true);
 
 // Vanessa Reference Design Pin configuration
 ioexp_int_l     <- hardware.pin1;   // I/O Expander Alert (Active Low)
@@ -881,6 +1152,7 @@ spi             <- hardware.spi257;
 epd_busy        <- hardware.pin6;   // Busy input
 // MOSI         <- hardware.pin7;   // SPI interface
 i2c             <- hardware.i2c89;
+i2c.configure(CLOCK_SPEED_100_KHZ);
 // SCL          <- hardware.pin8;   // I2C CLOCK
 // SDA          <- hardware.pin9;   // I2C DATA
 vbat_sns        <- hardware.pinA;   // Battery Voltage Sense (ADC)
@@ -888,36 +1160,42 @@ vbat_sns.configure(ANALOG_IN);
 temp_sns        <- hardware.pinB;   // Temperature Sense (ADC)
 pwm             <- hardware.pinC;   // PWM Output for EPD (200kHz, 50% duty cycle)
 epd_cs_l        <- hardware.pinD;   // EPD Chip Select (Active Low)
-vbat_sns_en     <- hardware.pinE;   // Battery Voltage Sense Enable
-vbat_sns_en.configure(DIGITAL_OUT);
-vbat_sns_en.write(0);
+flash_cs_l      <- hardware.pinE;
+flash_cs_l.configure(DIGITAL_OUT);
+flash_cs_l.write(1);
 
 // Vanessa includes an 8-channel I2C I/O Expander (SX1505)
-ioexp <- SX1505(i2c,IOEXP_ADDR,ioexp_int_l);    // instantiate I/O Expander
+ioexp <- SX1505(i2c,IOEXP_ADDR);    // instantiate I/O Expander
+// configure I/O Expander interrupt pin to check for callbacks on the I/O Expander
+ioexp_int_l.configure(DIGITAL_IN, function(){ ioexp.callback(); });
 
-epd_pwr_en_l    <- expGpio(i2c, IOEXP_ADDR, 0);     // EPD Panel Power Enable Low (GPIO 0)
-epd_rst_l       <- expGpio(i2c, IOEXP_ADDR, 1);     // EPD Reset Low (GPIO 1)
-epd_discharge   <- expGpio(i2c, IOEXP_ADDR, 2);     // EPD Discharge Line (GPIO 2)
-epd_border      <- expGpio(i2c, IOEXP_ADDR, 3);     // EPD Border CTRL Line (GPIO 3)
+epd_pwr_en_l    <- expGPIO(ioexp, 0);     // EPD Panel Power Enable Low (GPIO 0)
+epd_rst_l       <- expGPIO(ioexp, 1);     // EPD Reset Low (GPIO 1)
+epd_discharge   <- expGPIO(ioexp, 2);     // EPD Discharge Line (GPIO 2)
+epd_border      <- expGPIO(ioexp, 3);     // EPD Border CTRL Line (GPIO 3)
 
 // Two buttons also on GPIO Expander
-btn1            <- expGpio(i2c, IOEXP_ADDR, 4);     // User Button 1 (GPIO 4)
-btn1.configure(DIGITAL_IN, chkBtn1);
-btn2            <- expGpio(i2c, IOEXP_ADDR, 5);     // User Button 2 (GPIO 5)
-btn2.configure(DIGITAL_IN, chkBtn2);
+btn1            <- expGPIO(ioexp, 4).configure(DIGITAL_IN, chkBtn1);     // User Button 1 (GPIO 4)
+btn2            <- expGPIO(ioexp, 5).configure(DIGITAL_IN, chkBtn2);     // User Button 1 (GPIO 5)
 
 // Battery Charge Status on GPIO Expander
-chg_status      <- expGpio(i2c, IOEXP_ADDR, 6);     // BQ25060 Battery Management IC sets this line low when charging
-chg_status.configure(DIGITAL_IN, chgStatusChanged);
+chg_status      <- expGPIO(ioexp, 6).configure(DIGITAL_IN, chgStatusChanged);     // BQ25060 Battery Management IC sets this line low when charging
 
-// Flash CS_L on GPIO Expander
-flash_cs_l      <- expGpio(i2c, IOEXP_ADDR, 7);     // Flash Chip Select Low (GPIO 7)
+// VBAT_SNS_EN on GPIO Expander
+vbat_sns_en     <- expGPIO(ioexp, 7).configure(DIGITAL_OUT, 0);    // VBAT_SNS_EN (GPIO Expander Pin7)
+
+// Construct a SPI flash object
+spi.configure(CLOCK_IDLE_LOW, SPICLK);
+flash           <- spiFlash(spi, flash_cs_l);
+server.log(format("SPI Flash Initialized, MFG ID: 0x%02x",flash.mfgID));
 
 // Construct a thermistor object to be passed the epaper constructor
-therm           <- thermistor(temp_sns,3340, 298, 10000);
+therm           <- thermistor(temp_sns, 3340, 298, 10000);
 
 // log the battery voltage at startup
 server.log(format("Battery Voltage: %.2f V",chkBat()));
 
 // ask the agent to remind us what we are so we can finish initialization.
 agent.send("params_req",0);
+
+server.log("Config Done.");
