@@ -1,89 +1,138 @@
-// April with a 10k, 1% from 3V3 to pin9 and 10k B57861S0103F040 NTC Thermistor from pin9 to pin8
-// pin8 TEMP_READ_EN_L - drive low to enable temp reading (great for batteries!)
-// pin9 ANALOG NTC value
+/*
+Copyright (C) 2013 electric imp, inc.
 
-// benchmarking runtime: first tick with hardware.micros
-local tick = hardware.micros();
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software 
+and associated documentation files (the "Software"), to deal in the Software without restriction, 
+including without limitation the rights to use, copy, modify, merge, publish, distribute, 
+sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is 
+furnished to do so, subject to the following conditions:
 
-// turn on WiFi power save to reduce power consumption when awake
-imp.setpowersave(true);
+The above copyright notice and this permission notice shall be included in all copies or substantial 
+portions of the Software.
 
-// Output structure for sending temperature to server
-local tempOut    = OutputPort("Temperature (F)", "number");
-local tempOutStr = OutputPort("Temperature (F)", "string");
-local battOut    = OutputPort("Battery Voltage", "number");
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, 
+INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE 
+AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, 
+DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, 
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+*/
 
-// Configure on planner and register with imp server
-imp.configure("April NTC Thermometer", [], [tempOut, tempOutStr, battOut]);
-
-// Configure Pins
-// pin 8 is driven high to turn off temp monitor (saves power) or low to read
-hardware.pin8.configure(DIGITAL_OUT);
-hardware.pin8.write(1); 
-// pin 9 is the middle of the voltage divider formed by the NTC - read the analog voltage to determine temperature
-hardware.pin9.configure(ANALOG_IN);
+/* 
+ * TempBug Example Device Code
+ * Tom Byrne
+ * tom@electricimp.com
+ * 12/5/2013
+ */
+ 
+/* GLOBALS and CONSTANTS -----------------------------------------------------*/
 
 // all calculations are done in Kelvin
 // these are constants for this particular thermistor; if using a different one,
 // check your datasheet
 const b_therm = 3988;
 const t0_therm = 298.15;
+const r_therm = 10000;
+const WAKEINTERVAL_MIN = 15; // interval between wake-and-reads in minutes
 
-// to read the battery voltage reliably, we take 10 readings and average them
-local v_high  = 0;
-for(local i = 0; i < 10; i++){
-    imp.sleep(0.01);
-    v_high += hardware.voltage();
+/* CLASS AND GLOBAL FUNCTION DEFINITIONS -------------------------------------*/
+
+/*
+ * simple NTC thermistor
+ *
+ * Assumes thermistor is the high side of a resistive divider unless otherwise specified in constructor.
+ * Low-side resistor is of the same nominal resistance as the thermistor
+ */
+class thermistor {
+
+    // thermistor constants are shown on your thermistor datasheet
+	// beta value (for the temp range your device will operate in)
+	b_therm 		= null;
+	t0_therm 		= null;
+	// nominal resistance of the thermistor at room temperature
+	r0_therm		= null;
+
+	// analog input pin
+	p_therm 		= null;
+	points_per_read = null;
+
+	high_side_therm = null;
+
+	constructor(pin, b, t0, r, points = 10, _high_side_therm = true) {
+		this.p_therm = pin;
+		this.p_therm.configure(ANALOG_IN);
+
+		// force all of these values to floats in case they come in as integers
+		this.b_therm = b * 1.0;
+		this.t0_therm = t0 * 1.0;
+		this.r0_therm = r * 1.0;
+		this.points_per_read = points * 1.0;
+
+		this.high_side_therm = _high_side_therm;
+	}
+
+	// read thermistor in Kelvin
+	function read() {
+		local vdda_raw = 0;
+		local vtherm_raw = 0;
+		for (local i = 0; i < points_per_read; i++) {
+			vdda_raw += hardware.voltage();
+			vtherm_raw += p_therm.read();
+		}
+		local vdda = (vdda_raw / points_per_read);
+		local v_therm = (vtherm_raw / points_per_read) * (vdda / 65535.0);
+	
+		local r_therm = 0;	
+		if (high_side_therm) {
+			r_therm = (vdda - v_therm) * (r0_therm / v_therm);
+		} else {
+			r_therm = r0_therm / ((vdda / v_therm) - 1);
+		}
+
+		local ln_therm = math.log(r0_therm / r_therm);
+		local t_therm = (t0_therm * b_therm) / (b_therm - t0_therm * ln_therm);
+		return t_therm;
+	}
+
+	// read thermistor in Celsius
+	function read_c() {
+		return this.read() - 273.15;
+	}
+
+	// read thermistor in Fahrenheit
+	function read_f() {
+		local temp = this.read() - 273.15;
+		return (temp * 9.0 / 5.0 + 32.0);
+	}
 }
-v_high = v_high / 10.0;
 
-// benchmarking: see how long thermistor is "on"
-local ton = hardware.micros();
-// turn on the thermistor network
-hardware.pin8.write(0);
-// gather several ADC readings and average them (just takes out some noise)
-local val = 0;
-for (local i = 0; i < 10; i++) {
-    imp.sleep(0.01);
-    val += hardware.pin9.read();
-}
-val = val/10;
-// turn the thermistor network back off
-hardware.pin8.write(1);
-local toff = hardware.micros();
-server.log(format("Thermistor Network on for %d us", (toff-ton)));
+/* REGISTER AGENT CALLBACKS --------------------------------------------------*/
 
-// scale the ADC reading to a voltage by dividing by the full-scale value and multiplying by the supply voltage
-local v_therm = v_high * val / 65535.0;
-// calculate the resistance of the thermistor at the current temperature
-local r_therm = 10000.0 / ( (v_high / v_therm) - 1);
-local ln_therm = math.log(10000.0 / r_therm);
+/* RUNTIME BEGINS HERE -------------------------------------------------------*/
 
-local t_therm = (t0_therm * b_therm) / (b_therm - t0_therm * ln_therm) - 273.15;
+// Register with imp server
+imp.configure("TempBug",[],[]);
+imp.enableblinkup(true);
 
-// convert to fahrenheit for the less-scientific among us
-local f = (t_therm) * 9.0 / 5.0 + 32.0;
-// format into a string for the string output port
-local f_str = format("%.01f", f)
-server.log("Current temp is "+f_str);
+// Configure Pins
+// pin 8 is driven high to turn off temp monitor (saves power) or low to read
+therm_en_l <- hardware.pin8;
+therm_en_l.configure(DIGITAL_OUT);
+therm_en_l.write(1); 
+// pin 9 is the middle of the voltage divider formed by the NTC - read the analog voltage to determine temperature
+temp_sns <- hardware.pin9;
 
-// emit values to our output ports
-tempOut.set(f_str);
-tempOutStr.set(f_str+" F");
+// instantiate our thermistor class
+myThermistor <- thermistor(temp_sns, b_therm, t0_therm, r_therm, 10, false);
 
-// update the current battery voltage with a nicely-formatted string of the most recently-calculated value
-local batt_str = format("%.02f",v_high)
-battOut.set(batt_str);
-server.log("Battery Voltage is "+batt_str);
- 
-// benchmarking runtime
-local tock = hardware.micros();
-server.log(format("Read cycle took %d us", (tock-tick)));
- 
+agent.send("temp",format("%.2f",myThermistor.read_c()));
+// Prefer Fahrenheit? Use the line below instead of the one above.
+//agent.send("temp",format("%.2f",myThermistor.read_f()));
+
+
 //Sleep for 15 minutes and 1 second, minus the time past the 0:15
 //so we wake up near each 15 minute mark (prevents drifting on slow DHCP)
 imp.onidle( function() { 
-    server.sleepfor(1 + 15*60 - (time() % (15*60))); 
+    server.sleepfor(1 + WAKEINTERVAL_MIN*60 - (time() % (WAKEINTERVAL_MIN*60))); 
 });
 
 // full firmware is reloaded and run from the top on each wake cycle, so no need to construct a loop
