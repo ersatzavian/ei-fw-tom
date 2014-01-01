@@ -769,27 +769,31 @@ function scheduleWatering(schedule) {
     }
     
     foreach(key,value in schedule) {
+        local mykey = key;
+        
         // schedule the watering starts
-        imp.wakeup(secondsTil(now,value.ontime), function() {
+        imp.wakeup(secondsTil(now,value.onat), function() {
             local channelList = "";
-            foreach(channel in value.channels) {
+            foreach(channel in schedule[mykey].channels) {
                 channelList += format("%d ",channel);
                 setChannel(channel, 1);
             }
             log(format("Starting Scheduled Watering, Channels: %s", channelList));
         }.bindenv(this));
+
         // schedule the watering stops
-        imp.wakeup(secondsTil(now,value.offtime), function() {
+        imp.wakeup(secondsTil(now,value.offat), function() {
             local channelList = "";
-            foreach(channel in value.channels) {
+            foreach(channel in schedule[mykey].channels) {
                 channelList += format("%d ",channel);
                 setChannel(channel, 0);
             }
             log(format("Ending Scheduled Watering, Channels: %s", channelList));
         }.bindenv(this));
-        if (secondsTil(now,value.offtime) < secondsTil(now,value.ontime)) {
+        
+        if (secondsTil(now,value.offat) < secondsTil(now,value.onat)) {
             foreach(channel in value.channels) {
-                setChannel(channel, 0);
+                setChannel(channel, 1);
             }
         }
     }
@@ -799,18 +803,19 @@ function scheduleWatering(schedule) {
        foreach(channel in value.channels) {
            channelList += format("%d ",channel);
        }
-       log(format("On: %s, Off: %s, Channels: %s",value.ontime,
-            value.offtime, channelList));
+       log(format("On: %s, Off: %s, Channels: %s",value.onat,
+            value.offat, channelList));
     }
 }
 
 /* AGENT EVENT HANDLERS ======================================================*/
  
 agent.on("newSchedule", function(schedule) {
+    log("New Schedule Received.");
     // stash the latest schedule in the EEPROM
-   saveSchedule(schedule);
-   // schedule the on and off times for each watering in the latest schedule
-   scheduleWatering(schedule)
+    saveSchedule(schedule);
+    // schedule the on and off times for each watering in the latest schedule
+    scheduleWatering(schedule)
 });
  
 /* RUNTIME BEGINS HERE =======================================================*/ 
@@ -912,6 +917,20 @@ if (server.isconnected()) {
     setStatusLight(STATUS_DISCONNECTED);
     server.setsendtimeoutpolicy(RETURN_ON_ERROR, WAIT_TIL_SENT, WIFI_TIMEOUT);
 }
+
+// SecondsTil Tests
+local now = null;
+if (server.isconnected()) {
+    now = date();
+} else {
+    now = rtc.rtcdate();
+}
+
+log(format("Until 20:00: %d", secondsTil(now,"20:00")));
+log(format("Until 20:20: %d", secondsTil(now,"20:20")));
+log(format("Until 20:25: %d", secondsTil(now,"20:25")));
+log(format("Until 00:00: %d", secondsTil(now,"00:00")));
+log(format("Until 23:50: %d", secondsTil(now,"23:50")));
 
 // start the watering schedule
 fetchSchedule();
