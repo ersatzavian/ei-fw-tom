@@ -612,24 +612,26 @@ class cat24c {
 /* Calculate seconds from now until a given time.
  * Input: 
  *      now - a date object representing the current time
- *      targetTime - a 24-hour hours/minutes string, e.g. "12:34"
+ *      targetStr - a 24-hour hours/minutes string, e.g. "12:34"
  * Return:
  *      seconds in integers until the target time will next occur
  */
-function secondsTil(now,targetTime) {
-    local data = split(targetTime,":");
+function secondsTil(now,targetStr) {
+    local data = split(targetStr,":");
     local target = { hour = data[0].tointeger(), min = data[1].tointeger() };
+    target.hour -= TZOFFSET;
+    if (target.hour < 0) {
+        target.hour += 23;
+    }
     
     if ((target.hour < now.hour) || (target.hour == now.hour && target.min < now.min)) {
         target.hour += 24;
     }
     
-    local secondsTill = 0;
-    secondsTill += (target.hour - now.hour) * 3600;
-    secondsTill += (target.min - now.min) * 60;
-    log(secondsTill);
-    log(secondsTill + (TZOFFSET * 3600));
-    return secondsTill + (TZOFFSET * 3600);
+    local result = 0;
+    result += (target.hour - now.hour) * 3600;
+    result += (target.min - now.min) * 60;
+    return result;
 }
 
 /* Rain Sensor Handler */
