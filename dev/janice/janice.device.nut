@@ -5,14 +5,8 @@
  
 /* CONSTS and GLOBAL VARS ====================================================*/
 
-TZOFFSET <- 0;          // gmt offset in hours
-channelStates <- 0;      // Byte to store current state of sprinkler channels
-INHIBIT       <- false;  // flag to allow us to globally pause watering
 const WIFI_TIMEOUT = 30; // time in seconds to allow a connection attempt to wait
 const RECONNECT_PERIOD = 1; // time between reconnect attempts (minutes)
-
-scheduledEvents <- []; // array of timer IDs for scheduled watering events. This
-// allows these events to be cancelled before they occur if a new schedule comes in.
 
 /* GLOBAL CLASS AND FUNCTION DEFINITIONS =====================================*/
 
@@ -664,232 +658,263 @@ class statusLed {
     }
 }
 
+/* Class for a sprinkler schedule. 
+ * Constructor takes pre-instantiated:
+ *      - spi interface, sr_load pin, and sr_output_en_l pin for shift register
+ *      - rtc: a real-time clock object; the pcf8563
+ *      - eeprom: an eeprom object; the cat24c
+ *      - the serializer class must be included to use this class 
+ */ 
+class waterSchedule {    
+    spi             = null;     // SPI interface for shift register
+    sr_load         = null;     // load Pin for shift register
+    sr_output_en_l  = null;     // output enable for shift register
+    rtc             = null;
+    eeprom          = null;
+    led             = null;     // status LED object
+    channelStates   = null;     // Byte to store current state of sprinkler channels
+    gmtoffset       = null;     // GMT offset in hours (positive or negative)
+    schedule        = {};
+    scheduledEvents = [];       // array of timer IDs for scheduled watering events.
+    refreshtime     = "00:00"   // time of day to re-schedule watering events
 
-/* Calculate seconds from now until a given time.
- * Input: 
- *      now - a date object representing the current time
- *      targetStr - a 24-hour hours/minutes string, e.g. "12:34"
- * Return:
- *      seconds as an integer until the target time will next occur
- */
-function secondsTil(now,targetStr) {
-    local data = split(targetStr,":");
-    local target = { hour = data[0].tointeger(), min = data[1].tointeger() };
-    target.hour -= TZOFFSET;
-    if (target.hour < 0) {
-        target.hour += 23;
+    constructor(_spi, _sr_load, _sr_output_en_l, _eeprom, _rtc, _led) {
+        this.spi            = _spi;
+        this.sr_load        = _sr_load;
+        this.sr_output_en_l = _sr_output_en_l;
+        this.rtc            = _rtc;
+        this.eeprom         = _eeprom;
+        this.led            = _led;
     }
-    
-    if ((target.hour < now.hour) || (target.hour == now.hour && target.min < now.min)) {
-        target.hour += 24;
-    }
-    
-    local result = 0;
-    result += (target.hour - now.hour) * 3600;
-    result += (target.min - now.min) * 60;
-    return result;
-}
 
-/* Set Sprinkler Channel States */
-function setChannel(channel, state) {
-    if ((channel < 0) || channel > 8) return;
-    if (state) {
-        channelStates = channelStates | (0x01 << channel);
-    } else {
-        channelStates = channelStates & ~(0x01 << channel);
-    }
-    
-    // dispable the output and write the data out to the shift register
-    sr_output_en_l.write(1);
-    spi.write(format("%c",channelStates));
-    
-    // pulse the SRCLK line to load the data into the output stage
-    sr_load.write(0);
-    sr_load.write(1);
-    sr_load.write(0);
-    
-    // enable the output
-    sr_output_en_l.write(0);
-}
-
-function allOff() {
-    channelStates = 0x00;
-    
-    // dispable the output and write the data out to the shift register
-    sr_output_en_l.write(1);
-    spi.write(format("%c",channelStates));
-    
-    // pulse the SRCLK line to load the data into the output stage
-    sr_load.write(0);
-    sr_load.write(1);
-    sr_load.write(0);
-    
-    // enable the output
-    sr_output_en_l.write(0);   
-}
-
-/* Load the schedule table from the EEPROM */
-function loadSchedule() {
-    // the length of the serialized object is stored in the first 2 bytes of the eeprom
-    local lenstr = eeprom.read(2,0);
-    local len = (lenstr[1] << 8) + lenstr[0];
-    // the CRC for the stored table is in the third byte
-    log("Loaded "+len+" bytes, deserializing...");
-    local crc = eeprom.read(1,2)[0];
-    local serSchedule = eeprom.read(len,3);
-    local serBlob = blob(serSchedule.len());
-    serBlob.writestring(serSchedule);
-    if (serializer.CRC(serBlob) != crc) { 
-        log("Error: CRC Error while loading schedule from EEPROM");
-        return; 
-    } else {
-        local result = serializer.deserialize(serBlob);
-        TZOFFSET = result.tzoffset;
-        return result.schedule;
-    }
-}
-
-/* Serialize, CRC, and Save the schedule table to the EEPROM 
- * The TZ offset is also saved as a side effect.
- */
-function saveSchedule(schedule) {
-    local data = {"tzoffset": TZOFFSET, "schedule": schedule};
-    local serSchedule = serializer.serialize(data);
-    // write length of serialized object to first 2 bytes
-    eeprom.write(serSchedule.len() & 0xFF,0);
-    eeprom.write(serSchedule.len() & 0xFF00,1);
-    // write the CRC of the serialized object to the third byte
-    eeprom.write(serializer.CRC(serSchedule),2);
-    eeprom.write(serSchedule,3);
-}
-
-function cancelAllEvents() {
-    while (scheduledEvents.len() > 0) {
-        imp.cancelwakeup(scheduledEvents.pop());
-    }
-}
-
-/* Schedule On and Off events for each watering in the schedule table*/
-function scheduleWatering(schedule) {
-    // if loadSchedule() returned null, we're offline with no schedule.
-    // return and wait for connection to come up
-    if (schedule == null) {
-        log("Error: No Schedule.");
-        led.set(STATUS.ERROR);
-        return;
-    }
-    
-    // cancel any existing scheduled events before scheduling new ones
-    cancelAllEvents();
-    local now = null;
-    if (server.isconnected()) {
-        now = date(time(),'u');
-    } else {
-        now = rtc.rtcdate();
-    }
-     
-    foreach(waterevent in schedule) {
+    /* Set Sprinkler Channel States */
+    function setChannel(channel, state) {
+        if ((channel < 0) || channel > 8) return;
+        if (state) {
+            this.channelStates = this.channelStates | (0x01 << channel);
+        } else {
+            this.channelStates = this.channelStates & ~(0x01 << channel);
+        }
         
-        /* the list of channels must be local so that bindenv will hold it */
-        local mychannels = waterevent.channels;
+        // dispable the output and write the data out to the shift register
+        this.sr_output_en_l.write(1);
+        this.spi.write(format("%c",this.channelStates));
         
-        /* SCHEDULE WATERING STARTS -----------------------------------------*/
-        /* scheduled callback handles are added to the scheduledEvents array so
-         * they can be later cancelled. */
-        local handle = imp.wakeup(secondsTil(now,waterevent.onat), function() {
-            local channelList = "";
-            foreach(channel in mychannels) {
-                channelList += format("%d ",channel);
-                if (!INHIBIT) {
+        // pulse the SRCLK line to load the data into the output stage
+        this.sr_load.write(0);
+        this.sr_load.write(1);
+        this.sr_load.write(0);
+        
+        // enable the output
+        this.sr_output_en_l.write(0);
+    }
+
+    function stopAllChannels() {
+        this.channelStates = 0x00;
+        
+        // dispable the output and write the data out to the shift register
+        this.sr_output_en_l.write(1);
+        this.spi.write(format("%c",channelStates));
+        
+        // pulse the SRCLK line to load the data into the output stage
+        this.sr_load.write(0);
+        this.sr_load.write(1);
+        this.sr_load.write(0);
+        
+        // enable the output
+        this.sr_output_en_l.write(0);   
+    }
+
+    function halt() {
+        this.stopAllChannels();
+        this.cancel();
+    }
+
+    /* Calculate seconds from now until a given time.
+     * Input: 
+     *      targetStr - a 24-hour hours/minutes string, e.g. "12:34"
+     * Return:
+     *      seconds as an integer until the target time will next occur
+     */
+    function secondsTil(targetStr) {
+        local data = split(targetStr,":");
+        local target = { hour = data[0].tointeger(), min = data[1].tointeger() };
+        target.hour -= this.gmtoffset;
+        if (target.hour < 0) {
+            target.hour += 23;
+        }
+
+        local now = null;
+        if (server.isconnected()) {
+            now = date(time(),'u');
+        } else {
+            now = this.rtc.rtcdate();
+        }
+        
+        if ((target.hour < now.hour) || (target.hour == now.hour && target.min < now.min)) {
+            target.hour += 24;
+        }
+        
+        local result = 0;
+        result += (target.hour - now.hour) * 3600;
+        result += (target.min - now.min) * 60;
+        return result;
+    }
+
+    /* Load the schedule table from the EEPROM */
+    function load() {
+        // the length of the serialized object is stored in the first 2 bytes of the eeprom
+        local lenstr = this.eeprom.read(2,0);
+        local len = (lenstr[1] << 8) + lenstr[0];
+        // the CRC for the stored table is in the third byte
+        log("Loaded "+len+" bytes, deserializing...");
+        local crc = this.eeprom.read(1,2)[0];
+        local serSchedule = this.eeprom.read(len,3);
+        local serBlob = blob(serSchedule.len());
+        serBlob.writestring(serSchedule);
+        if (serializer.CRC(serBlob) != crc) { 
+            log("Error: CRC Error while loading schedule from EEPROM");
+            return; 
+        } else {
+            local result = serializer.deserialize(serBlob);
+            this.gmtoffset = result.gmtoffset;
+            this.schedule = result.schedule;
+        }
+    }
+
+    /* Serialize, CRC, and Save the schedule table to the EEPROM 
+     * The TZ offset is also saved as a side effect.
+     */
+    function save() {
+        local data = {"gmtoffset": this.gmtoffset, "schedule": this.schedule};
+        local serSchedule = serializer.serialize(data);
+        // write length of serialized object to first 2 bytes
+        this.eeprom.write(serSchedule.len() & 0xFF,0);
+        this.eeprom.write(serSchedule.len() & 0xFF00,1);
+        // write the CRC of the serialized object to the third byte
+        this.eeprom.write(serializer.CRC(serSchedule),2);
+        this.eeprom.write(serSchedule,3);
+    }
+
+    function set(newSchedule) {
+        this.schedule = newSchedule;
+        this.save();
+        this.run();
+    }
+
+    /* Walk the list of scheduled events and cancel them all */
+    function cancel() {
+        while (this.scheduledEvents.len() > 0) {
+            imp.cancelwakeup(this.scheduledEvents.pop());
+        }
+    }
+
+    /* Schedule On and Off events for each watering in the schedule table*/
+    function run() {
+        // if load() returned null, we're offline with no schedule.
+        // return and wait for connection to come up
+        if (this.schedule == null) {
+            log("Error: No Schedule.");
+            led.set(STATUS.ERROR);
+            return;
+        }
+        
+        // cancel any existing scheduled events before scheduling new ones
+        this.cancel();
+         
+        foreach(waterevent in this.schedule) {
+            
+            /* the list of channels must be local so that bindenv will hold it */
+            local mychannels = waterevent.channels;
+            
+            /* SCHEDULE WATERING STARTS -----------------------------------------*/
+            /* scheduled callback handles are added to the scheduledEvents array so
+             * they can be later cancelled. */
+            local handle = imp.wakeup(secondsTil(waterevent.onat), function() {
+                local channelList = "";
+                foreach(channel in mychannels) {
+                    channelList += format("%d ",channel);
                     setChannel(channel, 1);
                 }
-            }
-            log(format("Starting Scheduled Watering, Channels: %s", channelList));
-        /* Bindenv "binds" this callback to the current environment, 
-         * so the channel array will be remembered */
-        }.bindenv(this));
-        scheduledEvents.push(handle);
+                log(format("Starting Scheduled Watering, Channels: %s", channelList));
+            /* Bindenv "binds" this callback to the current environment, 
+             * so the channel array will be remembered */
+            }.bindenv(this));
+            this.scheduledEvents.push(handle);
 
-        /* SCHEDULE WATERING STOPS ------------------------------------------*/
-        handle = imp.wakeup(secondsTil(now,waterevent.offat), function() {
-            local channelList = "";
-            foreach(channel in mychannels) {
-                channelList += format("%d ",channel);
-                setChannel(channel, 0);
-            }
-            log(format("Ending Scheduled Watering, Channels: %s", channelList));
-        }.bindenv(this));
-        scheduledEvents.push(handle);
-        
-        /* if we're in the middle of a watering event when the schedule is received,
-         * start immediately. */
-        if (secondsTil(now,waterevent.offat) < secondsTil(now,waterevent.onat)) {
-            foreach(channel in waterevent.channels) {
-                if (!INHIBIT) {
+            /* SCHEDULE WATERING STOPS ------------------------------------------*/
+            handle = imp.wakeup(secondsTil(waterevent.offat), function() {
+                local channelList = "";
+                foreach(channel in mychannels) {
+                    channelList += format("%d ",channel);
+                    setChannel(channel, 0);
+                }
+                log(format("Ending Scheduled Watering, Channels: %s", channelList));
+            }.bindenv(this));
+            this.scheduledEvents.push(handle);
+            
+            /* if we're in the middle of a watering event when the schedule is received,
+             * start immediately. */
+            if (secondsTil(waterevent.offat) < secondsTil(waterevent.onat)) {
+                foreach(channel in waterevent.channels) {
                     setChannel(channel, 1);
                 }
             }
         }
+        
+        /* Schedule this function (this.run) to re-run at midnight nightly to refresh the schedule */
+        local refreshHandle = imp.wakeup(secondsTil(this.refreshtime), function() { this.run(); }.bindenv(this));
+        this.scheduledEvents.push(refreshHandle);
+        
+        foreach(waterevent in this.schedule) {
+           local channelList = "";
+           foreach(channel in waterevent.channels) {
+               channelList += format("%d ",channel);
+           }
+           log(format("On: %s, Off: %s, Channels: %s",waterevent.onat,
+                waterevent.offat, channelList));
+        }
     }
-    
-    foreach(waterevent in schedule) {
-       local channelList = "";
-       foreach(channel in waterevent.channels) {
-           channelList += format("%d ",channel);
-       }
-       log(format("On: %s, Off: %s, Channels: %s",waterevent.onat,
-            waterevent.offat, channelList));
-    }
-}
 
-/* Grab the schedule from the agent or the on-board EEPROM, depending on 
- * Connection status. If the schedule is received from the agent, it will be
- * saved to the EEPROM for future use.
- *
- * If we're connected to the agent, we first request the GMT offset so that 
- * we have it before we attempt to set the schedule. A schedule request will
- * be sent to the agent when the GMT offset is received.
- * 
- * If we're offline, the GMT offset will be stored in the EEPROM with the schedule.
- */
-function getSchedule() {
-    if (server.isconnected()) {
-        // we'll call for the schedule in a moment, as soon as we have this offset
-        agent.send("getTZoffset",0);
-    } else {
-        // load the schedule from the eeprom
-        // this will load the TZ offset as a side effect
-        scheduleWatering(loadSchedule());
+    /* Grab the schedule from the agent or the on-board EEPROM, depending on 
+     * Connection status. If the schedule is received from the agent, it will be
+     * saved to the EEPROM for future use.
+     *
+     * If we're connected to the agent, we first request the GMT offset so that 
+     * we have it before we attempt to set the schedule. A schedule request will
+     * be sent to the agent when the GMT offset is received.
+     * 
+     * If we're offline, the GMT offset will be stored in the EEPROM with the schedule.
+     */
+    function fetch() {
+        if (server.isconnected()) {
+            // we'll call for the schedule in a moment, as soon as we have this offset
+            agent.send("getGMToffset",0);
+        } else {
+            // load the schedule from the eeprom
+            // this will load the GMT offset as a side effect
+            this.load();
+            this.run();
+        }
     }
 }
 
 /* AGENT EVENT HANDLERS ======================================================*/
-
-agent.on("setTZoffset", function(val) {
-    TZOFFSET = val;
+ 
+agent.on("setGMToffset", function(offset) {
+    mySchedule.gmtoffset = offset;
     // now that we have the TZ offset, we can handle a new schedule, so ask for it.
     agent.send("getSchedule",0);
-    log("Got GMT Offset ("+TZOFFSET+"), requesting schedule.");
-})
+}); 
  
 agent.on("newSchedule", function(schedule) {
     log("New Schedule Received.");
-    // stash the latest schedule in the EEPROM
-    saveSchedule(schedule);
-    // schedule the on and off times for each watering in the latest schedule
-    scheduleWatering(schedule)
+    // set the new schedule, save it to the EEPROM, and start running it
+    mySchedule.set(schedule)
 });
 
-agent.on("resume", function(schedule) {
-    INHIBIT = false;
-    saveSchedule(schedule);
-    // schedule the on and off times for each watering in the latest schedule
-    scheduleWatering(schedule)
-})
-
-agent.on("pause", function(val) {
-    allOff();
-    INHIBIT = true;
+agent.on("halt", function(val) {
+    waterSchedule.halt();
 });
 
 /* RUNTIME BEGINS HERE =======================================================*/ 
@@ -903,15 +928,15 @@ ioexp_int_l <- hardware.pinB;
 disp_ioexp  <- SX1505(i2c,0x42);  //Display Board 8-Channel IO expander
 
 //Imp Pin configuration
-beeper          <- hardware.pin1;
-disp_reset_l    <- hardware.pin2;
-sr_output_en_l  <- hardware.pin6;
-sr_load         <- hardware.pinA;
-led_pin         <- hardware.pinC;
-rain_sns_l      <- hardware.pinD;
-spi             <- hardware.spi257;
+beeper_pin          <- hardware.pin1;
+disp_reset_l_pin    <- hardware.pin2;
+sr_output_en_l_pin  <- hardware.pin6;
+sr_load_pin         <- hardware.pinA;
+led_pin             <- hardware.pinC;
+rain_sns_l_pin      <- hardware.pinD;
+spi_ifc             <- hardware.spi257;
 
-beeper.configure(PWM_OUT, 1.0/1000, 0.0);
+beeper_pin.configure(PWM_OUT, 1.0/1000, 0.0);
 led_pin.configure(PWM_OUT, 1.0/1000, 0.0);
 
 led <- statusLed(led_pin);
@@ -920,16 +945,23 @@ led <- statusLed(led_pin);
 function rainStateChanged() {
     server.log("Rain Sensor: "+rain_sns_l.read());
 }
-rain_sns_l.configure(DIGITAL_IN_PULLUP, rainStateChanged);
+rain_sns_l_pin.configure(DIGITAL_IN_PULLUP, rainStateChanged);
 
-spi.configure(SIMPLEX_TX | MSB_FIRST | CLOCK_IDLE_HIGH, 4000);
-sr_output_en_l.configure(DIGITAL_OUT);
-sr_output_en_l.write(1);
-sr_load.configure(DIGITAL_OUT);
-sr_load.write(0);
+spi_ifc.configure(SIMPLEX_TX | MSB_FIRST | CLOCK_IDLE_HIGH, 4000);
+sr_output_en_l_pin.configure(DIGITAL_OUT);
+sr_output_en_l_pin.write(1);
+sr_load_pin.configure(DIGITAL_OUT);
+sr_load_pin.write(0);
 
-// Clear the sprinkler channels
-allOff();
+// Initialize I2C Devices
+// Configure the RTC
+rtc <-  pcf8563(i2c);
+
+// Configure the EEPROM
+eeprom <- cat24c(i2c);
+
+// instantiate a water scheduler with our shift register, RTC, and EEPROM
+mySchedule <- waterSchedule(spi_ifc, sr_load_pin, sr_output_en_l_pin, eeprom, rtc, led);
 
 /*
 //Configure the Display
@@ -944,13 +976,6 @@ btn_down   <- ExpGPIO(disp_ioexp, 4).configure(DIGITAL_IN_PULLUP, function(){ser
 disp_rst_l <- ExpGPIO(disp_ioexp, 5).configure(DIGITAL_OUT, 1);
 */
 
-// Initialize I2C Devices
-// Configure the RTC
-rtc <-  pcf8563(i2c);
-
-// Configure the EEPROM
-eeprom <- cat24c(i2c);
-
 //Initialize the interrupt Pin
 ioexp_int_l.configure(DIGITAL_IN_PULLUP, function(){ disp_ioexp.callback(); });
 
@@ -958,6 +983,9 @@ ioexp_int_l.configure(DIGITAL_IN_PULLUP, function(){ disp_ioexp.callback(); });
 log("Software Version: "+imp.getsoftwareversion());
 log("Free Memory:"+imp.getmemoryfree());
 imp.enableblinkup(true);
+
+// Clear the sprinkler channels
+mySchedule.halt();
 
 // Check the RTC
 local now = date();
@@ -984,7 +1012,7 @@ server.onunexpecteddisconnect(function(err) {
         server.connect(function() {
             led.set(STATUS.CONNECTED);
             rtc.sync();
-            getSchedule();
+            mySchedule.fetch();
         }, WIFI_TIMEOUT);
     });
 });
@@ -999,5 +1027,5 @@ if (server.isconnected()) {
     server.setsendtimeoutpolicy(RETURN_ON_ERROR, WAIT_TIL_SENT, WIFI_TIMEOUT);
 }
 
-// start the watering schedule
-getSchedule();
+// get the watering schedule and start working.
+mySchedule.fetch();

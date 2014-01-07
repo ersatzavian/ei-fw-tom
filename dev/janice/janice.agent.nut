@@ -10,8 +10,8 @@ saveData <- server.load(); // attempt to pick the schedule back up from the serv
 if (!("schedule" in saveData)) {
     saveData.schedule <- [];
 } 
-if (!("tzoffset" in saveData)) {
-    saveData.tzoffset <- null;
+if (!("gmtoffset" in saveData)) {
+    saveData.gmtoffset <- null;
 }
 
 // UI webpage will be stored at global scope as a multiline string
@@ -158,13 +158,13 @@ function prepWebpage() {
                                 <div class='col-md-8 water-control'>\
                                     <div class='form-group'>\
                                         <div class='water-time input-group'>\
-                                            <input data-format='hh:mm' type='text' value='12:00' class='form-control water-start' readonly='readonly'></input>\
+                                            <input data-format='hh:mm' type='time' value='12:00' class='form-control water-start' readonly='readonly'></input>\
                                             <span class='input-group-addon'><span class='glyphicon glyphicon-time'></span></span>\
                                         </div>\
                                     </div>\
                                     <div class='form-group'>\
                                         <div class='water-time input-group'>\
-                                            <input data-format='hh:mm' type='text' value = '12:00' class='form-control water-stop' readonly='readonly'></input>\
+                                            <input data-format='hh:mm' type='time' value = '12:00' class='form-control water-stop' readonly='readonly'></input>\
                                             <span class='input-group-addon'><span class='glyphicon glyphicon-time'></span></span>\
                                         </div>\
                                     </div>\
@@ -314,7 +314,7 @@ function get_lat_lon(location, callback = null) {
 
 // -----------------------------------------------------------------------------
 const GOOGLE_MAPS_URL = "https://maps.googleapis.com/maps/api";
-function get_tzoffset(lat, lon, callback = null) {
+function get_gmtoffset(lat, lon, callback = null) {
     local url = format("%s/timezone/json?sensor=false&location=%f,%f&timestamp=%d", GOOGLE_MAPS_URL, lat, lon, time());
     http.get(url, {}).sendasync(function(res) {
         if (res.statuscode != 200) {
@@ -325,9 +325,9 @@ function get_tzoffset(lat, lon, callback = null) {
                 local json = http.jsondecode(res.body);
                 local dst = json.dstOffset.tofloat();
                 local raw = json.rawOffset.tofloat();
-                local tzoffset = ((raw+dst)/60.0/60.0);
+                local gmtoffset = ((raw+dst)/60.0/60.0);
                 
-                if (callback) callback(tzoffset);
+                if (callback) callback(gmtoffset);
             } catch (e) {
                 server.error("Google maps error: " + e);
                 if (callback) callback(null);
@@ -339,8 +339,21 @@ function get_tzoffset(lat, lon, callback = null) {
 
 /* DEVICE EVENT CALLBACKS ====================================================*/ 
 
-device.on("getTZoffset", function(val) {
-    device.send("setTZoffset", saveData.tzoffset)
+device.on("getGMToffset", function(val) {
+    
+    // Get the time zone offset if it was not loaded with server.load().
+    if (saveData.gmtoffset == null) {
+        get_lat_lon(location, function(lat, lon) {    
+            get_gmtoffset(lat, lon, function(offset) {
+                server.log("GMT Offset = "+offset+" hours.");
+                saveData.gmtoffset = offset;
+                device.send("setGMToffset", saveData.gmtoffset)
+                server.save(saveData);
+            });
+        });
+    } else {
+        device.send("setGMToffset", saveData.gmtoffset)
+    }
 });
 
 device.on("getSchedule", function(val) {
@@ -378,12 +391,12 @@ http.onrequest(function(req, res) {
     /* Stop any current watering and inhibit the start of other events while paused */
     } else if (req.path == "/stop" || req.path == "/stop/") {
         server.log("Agent requested to pause sprinkler");
-        device.send("pause",0);
+        device.send("halt",0);
         res.send(200,"Sprinkler Stopped");
     /* Resume watering after being paused */
     } else if (req.path == "/resume" || req.path == "/resume/") {
         server.log("Agent requested to resume watering");
-        device.send("resume", SAVEDATA.SCHEDULE);
+        device.send("newSchedule", saveData.schedule);
         res.send(200,"Sprinkler Resumed");
     /* The web UI will poll here for the device connection status */
     } else if (req.path == "/status" || req.path == "/status/") {
@@ -402,16 +415,5 @@ server.log("Sprinkler Agent Started.");
  * where the device is, which will later be used to set the location and determine
  * the time zone programatically. */
 location <- "CA/Los_Altos";
-
-// Get the time zone offset if it was not loaded with server.load().
-if (saveData.tzoffset == null) {
-    get_lat_lon(location, function(lat, lon) {    
-        get_tzoffset(lat, lon, function(tz) {
-            server.log("GMT Offset = "+tz+" hours.");
-            saveData.tzoffset = tz;
-            server.save(saveData);
-        });
-    });
-}
 
 prepWebpage();
