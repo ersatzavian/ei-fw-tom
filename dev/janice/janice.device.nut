@@ -5,13 +5,20 @@
  
 /* CONSTS and GLOBAL VARS ====================================================*/
 
+TZOFFSET <- 0;          // gmt offset in hours
 channelStates <- 0;      // Byte to store current state of sprinkler channels
+INHIBIT       <- false;  // flag to allow us to globally pause watering
 const WIFI_TIMEOUT = 30; // time in seconds to allow a connection attempt to wait
 const RECONNECT_PERIOD = 1; // time between reconnect attempts (minutes)
-const STATUS_CONNECTED      = 0; // connection status for status LED (if equipped)
-const STATUS_DISCONNECTED   = 1;
-const STATUS_ERROR          = 2;
+enum STATUS {
+    CONNECTED,
+    DISCONNECTED,
+    ERROR
+};
 const BLINK_INTERVAL        = 0.5; // blink interval for status LED in seconds
+
+scheduledEvents <- []; // array of timer IDs for scheduled watering events. This
+// allows these events to be cancelled before they occur if a new schedule comes in.
 
 /* GLOBAL CLASS AND FUNCTION DEFINITIONS =====================================*/
 
@@ -530,9 +537,8 @@ class pcf8563 {
      * The imp's RTC is re-synced on server connect, so syncing right after a 
      * server connect is recommended.
      */
-    function sync(setTime = null) {
-        local now = date();
-        if (setTime) { now = setTime; };
+    function sync() {
+        local now = date(time(),'u');
         local secStr = format("%02d",now.sec);
         local minStr = format("%02d",now.min);
         local hourStr = format("%02d",now.hour);
@@ -621,7 +627,9 @@ function secondsTil(now,targetTime) {
     local secondsTill = 0;
     secondsTill += (target.hour - now.hour) * 3600;
     secondsTill += (target.min - now.min) * 60;
-    return secondsTill;
+    log(secondsTill);
+    log(secondsTill + (TZOFFSET * 3600));
+    return secondsTill + (TZOFFSET * 3600);
 }
 
 /* Rain Sensor Handler */
@@ -694,17 +702,17 @@ function setStatusLed(status) {
     if ("disp" in this) {
         // this means we have a display instantiated and the status light is 
         // being used to set brightness.
-        if (status == STATUS_CONNECTED)         {disp.write("Connected.");}
-        else if (status == STATUS_DISCONNECTED) {disp.write("Connection Lost.");} 
-        else if (status == STATUS_ERROR)        {disp.write("Schedule Lost");}
+        if (status == STATUS.CONNECTED)         {disp.write("Connected.");}
+        else if (status == STATUS.DISCONNECTED) {disp.write("Connection Lost.");} 
+        else if (status == STATUS.ERROR)        {disp.write("Schedule Lost");}
     } else {
         // if we're here, the status changed, so cancel an existing blink timers
         if (blinkTimerHandle) {imp.cancelwakeup(blinkTimerHandle);}
         
-        if (status == STATUS_CONNECTED)         {status_brightness.write(1.0);}
-        else if (status == STATUS_DISCONNECTED) {
+        if (status == STATUS.CONNECTED)         {status_brightness.write(1.0);}
+        else if (status == STATUS.DISCONNECTED) {
             blinkTimerHandle = imp.wakeup(BLINK_INTERVAL, toggleStatusLed);}
-        else if (status == STATUS_ERROR)      {status_brightness.write(0.0);}
+        else if (status == STATUS.ERROR)      {status_brightness.write(0.0);}
     }
 }
 
@@ -723,13 +731,18 @@ function loadSchedule() {
         log("Error: CRC Error while loading schedule from EEPROM");
         return; 
     } else {
-        return serializer.deserialize(serBlob);
+        local result = serializer.deserialize(serBlob);
+        TZOFFSET = result.tzoffset;
+        return result.schedule;
     }
 }
 
-/* Serialize, CRC, and Save the schedule table to the EEPROM */
+/* Serialize, CRC, and Save the schedule table to the EEPROM 
+ * The TZ offset is also saved as a side effect.
+ */
 function saveSchedule(schedule) {
-    local serSchedule = serializer.serialize(schedule);
+    local data = {"tzoffset": TZOFFSET, "schedule": schedule};
+    local serSchedule = serializer.serialize(data);
     // write length of serialized object to first 2 bytes
     eeprom.write(serSchedule.len() & 0xFF,0);
     eeprom.write(serSchedule.len() & 0xFF00,1);
@@ -738,16 +751,9 @@ function saveSchedule(schedule) {
     eeprom.write(serSchedule,3);
 }
 
-/* Grab the schedule from the agent or the on-board EEPROM, depending on 
- * Connection status. If the schedule is received from the agent, it will be
- * saved to the EEPROM for future use.
- */
-function fetchSchedule() {
-    if (server.isconnected()) {
-        agent.send("getSchedule",0);
-    } else {
-        // load the schedule from the eeprom
-        scheduleWatering(loadSchedule());
+function cancelAllEvents() {
+    while (scheduledEvents.len() > 0) {
+        imp.cancelwakeup(sheduledEvents.pop());
     }
 }
 
@@ -755,60 +761,92 @@ function fetchSchedule() {
 function scheduleWatering(schedule) {
     // if loadSchedule() returned null, we're offline with no schedule.
     // return and wait for connection to come up
-    if (!schedule) {
+    if (schedule == null) {
         log("Error: No Schedule.");
-        setStatusLed(STATUS_ERROR);
+        setStatusLed(STATUS.ERROR);
         return;
     }
     
+    // cancel any existing scheduled events before scheduling new ones
+    cancelAllEvents();
     local now = null;
     if (server.isconnected()) {
-        now = date();
+        now = date(time(),'u');
     } else {
         now = rtc.rtcdate();
     }
-    
-    foreach(key,value in schedule) {
-        local mykey = key;
+     
+    foreach(waterevent in schedule) {
+        local mychannels = waterevent.channels;
         
         // schedule the watering starts
-        imp.wakeup(secondsTil(now,value.onat), function() {
+        local handle = imp.wakeup(secondsTil(now,waterevent.onat), function() {
             local channelList = "";
-            foreach(channel in schedule[mykey].channels) {
+            foreach(channel in mychannels) {
                 channelList += format("%d ",channel);
-                setChannel(channel, 1);
+                if (!INHIBIT) {
+                    setChannel(channel, 1);
+                }
             }
             log(format("Starting Scheduled Watering, Channels: %s", channelList));
         }.bindenv(this));
+        scheduledEvents.push(handle);
 
         // schedule the watering stops
-        imp.wakeup(secondsTil(now,value.offat), function() {
+        handle = imp.wakeup(secondsTil(now,waterevent.offat), function() {
             local channelList = "";
-            foreach(channel in schedule[mykey].channels) {
+            foreach(channel in mychannels) {
                 channelList += format("%d ",channel);
                 setChannel(channel, 0);
             }
             log(format("Ending Scheduled Watering, Channels: %s", channelList));
         }.bindenv(this));
+        scheduledEvents.push(handle);
         
-        if (secondsTil(now,value.offat) < secondsTil(now,value.onat)) {
-            foreach(channel in value.channels) {
-                setChannel(channel, 1);
+        if (secondsTil(now,waterevent.offat) < secondsTil(now,waterevent.onat)) {
+            foreach(channel in mychannels) {
+                if (!INHIBIT) {
+                    setChannel(channel, 1);
+                }
             }
         }
     }
     
-    foreach(key, value in schedule) {
+    foreach(waterevent in schedule) {
        local channelList = "";
-       foreach(channel in value.channels) {
+       foreach(channel in waterevent.channels) {
            channelList += format("%d ",channel);
        }
-       log(format("On: %s, Off: %s, Channels: %s",value.onat,
-            value.offat, channelList));
+       log(format("On: %s, Off: %s, Channels: %s",waterevent.onat,
+            waterevent.offat, channelList));
+    }
+    
+    server.log("Scheduled "+scheduledEvents.len()+" events.");
+}
+
+/* Grab the schedule from the agent or the on-board EEPROM, depending on 
+ * Connection status. If the schedule is received from the agent, it will be
+ * saved to the EEPROM for future use.
+ */
+function getSchedule() {
+    if (server.isconnected()) {
+        // we'll call for the schedule in a moment, as soon as we have this offset
+        agent.send("getTZoffset",0);
+    } else {
+        // load the schedule from the eeprom
+        // this will load the TZ offset as a side effect
+        scheduleWatering(loadSchedule());
     }
 }
 
 /* AGENT EVENT HANDLERS ======================================================*/
+
+agent.on("setTZoffset", function(val) {
+    TZOFFSET = val;
+    // now that we have the TZ offset, we can handle a new schedule, so ask for it.
+    agent.send("getSchedule",0);
+    log("Got GMT Offset ("+TZOFFSET+"), requesting schedule.");
+})
  
 agent.on("newSchedule", function(schedule) {
     log("New Schedule Received.");
@@ -817,14 +855,26 @@ agent.on("newSchedule", function(schedule) {
     // schedule the on and off times for each watering in the latest schedule
     scheduleWatering(schedule)
 });
- 
+
+agent.on("resume", function(schedule) {
+    INHIBIT = false;
+    saveSchedule(schedule);
+    // schedule the on and off times for each watering in the latest schedule
+    scheduleWatering(schedule)
+})
+
+agent.on("pause", function(val) {
+    allOff();
+    INHIBIT = true;
+});
+
 /* RUNTIME BEGINS HERE =======================================================*/ 
 
 //Initialize the I2C bus
 i2c <- hardware.i2c89;
 i2c.configure(CLOCK_SPEED_100_KHZ);
 
-//Initialize IO expanders
+//Initialize IO expanders`
 ioexp_int_l <- hardware.pinB; 
 disp_ioexp  <- SX1505(i2c,0x42);  //Display Board 8-Channel IO expander
 
@@ -881,7 +931,7 @@ imp.enableblinkup(true);
 // Check the RTC
 local now = date();
 log(format("RTC Clock Integrity: %x",rtc.clkGood()));
-log(format("Current Time %02d:%02d:%02d, %02d/%02d/%02d",now.hour,
+log(format("Current UTC Time %02d:%02d:%02d, %02d/%02d/%02d",now.hour,
         now.min,now.sec,now.month+1,now.day,now.year));
 log(format("RTC Set to %02d:%02d:%02d, %02d/%02d/%02d",rtc.hour(),
     rtc.min(),rtc.sec(),rtc.month(),rtc.day(),rtc.year()));
@@ -895,42 +945,28 @@ log(format("RTC Set to %02d:%02d:%02d, %02d/%02d/%02d",rtc.hour(),
 // to set the the send timeout policy to RETURN_ON_ERROR (manual connect) 
 // immediately so we can keep doing our plant-watering job. 
 server.onunexpecteddisconnect(function(err) {
-    setStatusLight(STATUS_DISCONNECTED);
+    setStatusLight(STATUS.DISCONNECTED);
     server.setsendtimeoutpolicy(RETURN_ON_ERROR, WAIT_TIL_SENT, WIFI_TIMEOUT);
     // this is also a good time to set up some reconnection attempts
     imp.wakeup((60*RECONNECT_PERIOD), function() {
         imp.wakeup((60*RECONNECT_PERIOD), this);
         server.connect(function() {
-            setStatusLed(STATUS_CONNECTED);
+            setStatusLed(STATUS.CONNECTED);
             rtc.sync();
-            fetchSchedule();
+            getSchedule();
         }, WIFI_TIMEOUT);
     });
 });
 
 // if we're connected now, sync up with the agent
 if (server.isconnected()) {
-    setStatusLed(STATUS_CONNECTED);
-    // we update the imp's internal RTC when we connect; sync the backup clock
+    setStatusLed(STATUS.CONNECTED);
+    // we update the imp's internal RTC when we connect
     rtc.sync();
 } else {
-    setStatusLight(STATUS_DISCONNECTED);
+    setStatusLight(STATUS.DISCONNECTED);
     server.setsendtimeoutpolicy(RETURN_ON_ERROR, WAIT_TIL_SENT, WIFI_TIMEOUT);
 }
 
-// SecondsTil Tests
-local now = null;
-if (server.isconnected()) {
-    now = date();
-} else {
-    now = rtc.rtcdate();
-}
-
-log(format("Until 20:00: %d", secondsTil(now,"20:00")));
-log(format("Until 20:20: %d", secondsTil(now,"20:20")));
-log(format("Until 20:25: %d", secondsTil(now,"20:25")));
-log(format("Until 00:00: %d", secondsTil(now,"00:00")));
-log(format("Until 23:50: %d", secondsTil(now,"23:50")));
-
 // start the watering schedule
-fetchSchedule();
+getSchedule();

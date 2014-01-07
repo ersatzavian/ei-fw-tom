@@ -6,7 +6,13 @@
 /* CONSTS AND GLOBALS ========================================================*/
 
 // Watering Schedule
-SCHEDULE <- server.load(); // attempt to pick the schedule back up from the server in case of agent restart
+SAVEDATA <- server.load(); // attempt to pick the schedule back up from the server in case of agent restart
+if (!("SCHEDULE" in SAVEDATA)) {
+    SAVEDATA.SCHEDULE <- [];
+} 
+if (!("TZOFFSET" in SAVEDATA)) {
+    SAVEDATA.TZOFFSET <- null;
+}
 
 // UI webpage will be stored at global scope as a multiline string
 WEBPAGE <- @"<h2>Agent initializing, please refresh.</h2>";
@@ -30,6 +36,7 @@ function prepWebpage() {
         <title>Janice</title>
         <link href='data:image/x-icon;base64,AAABAAEAEBAAAAAAAABoBAAAFgAAACgAAAAQAAAAIAAAAAEAIAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAD///8A////AP///wD///8A////AP///wD///8AcHBwMl9rT65DZwZX////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8Aam9ioUxuHv9FbgX/Q28DV////wD///8A////AP///wD///8A////AP///wD///8A////AP///wByb29VU3Qz/UZ1Bv9GdQb/RnUG/0Z1Blf///8A////AP///wD///8A////AP///wD///8A////AP///wD///8ASn0U+0d9CP9HfQj/R30I/0d9CP9WeC+RbW1tFf///wD///8A////AP///wD///8A////AP///wD///8A////AEmEBf9JhAX/SYQF/0mEBf9JhAX/S4sYoGV8W/lxbGw0////AP///wD///8A////AP///wD///8A////AP///wBKiwb/SosG/0qLBv9Kiwb/SosG/02RIKBQmD7/VpNH/211aNp1amoY////AP///wD///8A////AP///wD///8AS5IA/0uSAP9LkgD/S5IA/0qTAP5OmSaUUp5N/1KeTf9Snk3/YIxcv////wD///8A////AP///wD///8A////AE2aAP9NmgD/TZoA/0yaAO1OmgaDXZhdaFSkV/9UpFf/VKRX/1eiWb////8A////AP///wD///8A////AP///wBNngD/TZ4A/02eAPxQnQlwaYBcUFypTqBWp1z/Vqdc/1anXP9YpF2/////AP///wD///8A////AP///wD///8AT6YA/06mALRreWVyaada+Ga3Uf9gtFugWK9l/1ivZf9Yr2X/Watnv////wD///8A////AP///wD///8A////AFGrAExup2x0a75p/2u+af9rvmn/aL1qZVu1cOBbtm//W7Zv/12zb7////8A////AP///wD///8A////AP///wD///8AcMN/u3DEfv9wxH7/cMR+/2/EflcA//8BXr53jV++eP9gune/////AP///wD///8A////AP///wD///8A////AHfIkbt3yZH/d8mR/3fJkf94ypBX////AP///wD///8BYcSAhv///wD///8A////AP///wD///8A////AP///wB9z6K7fs+j/37Po/9+zqLnZsyZBf///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8Ag9O0u4PUs+WD07Yj////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AIjcxjr///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A/38AAPx/AAD4fwAA8D8AAPAfAADwBwAA8AMAAPBDAADxgwAA8gMAAPxDAAD4YwAA+HsAAPh/AAD5/wAA//8AAA==' rel='icon' type='image/x-icon' /> 
         <link href='https://netdna.bootstrapcdn.com/bootstrap/3.0.2/css/bootstrap.min.css' rel='stylesheet'>
+        <link href='http://demo.electricimp.com/bootstrap-datetimepicker/bootstrap-datetimepicker.min.css' rel='stylesheet'>
     
       </head>
       <body>
@@ -57,10 +64,25 @@ function prepWebpage() {
         <div class='container'>
           <div class='row' style='margin-top: 80px'>
             <div class='col-md-offset-2 col-md-8 well'>
+                <div id='disconnected' class='alert alert-warning' style='display:none'>
+                    <button type='button' class='close' data-dismiss='alert' aria-hidden='true'>&times;</button>
+                    <strong>Device Not Connected.</strong> Check your sprinkler's internet connection .
+                </div>
+                <div id='schedulesetok' class='alert alert-success' style='display:none'>
+                    <button type='button' class='close' data-dismiss='alert' aria-hidden='true'>&times;</button>
+                    <strong>New Schedule Set.</strong>
+                </div>
+                <div id='scheduleseterr' class='alert alert-error' style='display:none'>
+                    <button type='button' class='close' data-dismiss='alert' aria-hidden='true'>&times;</button>
+                    <strong>New Schedule Not Set.</strong> Something has gone wrong.
+                </div>
                 <div class='row'>
                   <div class='col-md-12 form-group'>
                     <h2 style='display: inline'>Watering Schedule</h2>
-                    <button type='button' class='btn btn-default' style='vertical-align: top; margin-left: 15px;' onclick='newEntry()'><span class='glyphicon glyphicon-plus'></span> New</button></div>
+                    <button type='button' class='btn btn-default' style='vertical-align: top; margin-left: 15px;' onclick='newEntry()'><span class='glyphicon glyphicon-plus'></span> New</button>
+                    <button type='button' id='pause' class='btn btn-danger' style='vertical-align: top; margin-left: 15px; display: inline;' onclick='pause()'><span class='glyphicon glyphicon-pause'></span> Pause Watering</button>
+                    <button type='button' id='resume' class='btn btn-success' style='vertical-align: top; margin-left: 15px; display: none;' onclick='resume()'><span class='glyphicon glyphicon-play'></span> Resume Watering</button>
+                  </div>
                   <div id='entries'>
                   </div>
                 </div>
@@ -86,25 +108,26 @@ function prepWebpage() {
       <!-- javascript -->
       <script src='https://cdnjs.cloudflare.com/ajax/libs/jquery/2.0.3/jquery.min.js'></script>
       <script src='https://netdna.bootstrapcdn.com/bootstrap/3.0.2/js/bootstrap.min.js'></script>
-      <script type='text/javascript' src='https://cdn.firebase.com/v0/firebase.js'></script>
+      <script src='https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.5.0/moment.min.js'></script>
+      <script src='http://demo.electricimp.com/bootstrap-datetimepicker/bootstrap-datetimepicker.min.js'></script>
     
       <script>
       
         function showSchedule(rawdata) {
             console.log('got schedule from agent: '+rawdata);
             var data = JSON.parse(rawdata);
-            if (Object.keys(data).length > 0) {
-                for(var key in data) {
+            if (data.length > 0) {
+                for (var i = 0; i < data.length; i++) {
                     newEntry();
-                    $('.water-control').last().children()[0].value = data[key].onat;
-                    $('.water-control').last().children()[1].value = data[key].offat;
-                    for (var i = 0; i < data[key].channels.length; i++) {
-                        var ch = data[key].channels[i];
+                    $('.water-start').last()[0].value = data[i].onat;
+                    $('.water-stop').last()[0].value = data[i].offat;
+                    for (var j = 0; j < data[i].channels.length; j++) {
+                        var ch = data[i].channels[j];
                         $('.water-channels').last().find('#'+ch)[0].checked = 1;
                     }
                 }
             } else {
-                console.log('Invalid Schedule Received from Agent: '+rawdata);
+                //console.log('Empty Schedule Received from Agent: '+rawdata);
             }
         }
       
@@ -128,14 +151,24 @@ function prepWebpage() {
         
         var entryHtml = " + "\""+@"<div class='well row' style='width: 80%; margin-left: 20px;'>\
                                 <div class='col-md-4'>\
-                                    <p style='margin-top: 10px'><strong>Start watering at (24h): </strong></p>\
-                                    <p style='margin-top: 10px'><strong>Stop Watering at (24h): </strong></p>\
-                                    <p style='margin-top: 10px'><strong>Zones: </strong></p>\
+                                    <p style='margin-top: 8px'><strong>Start watering at (24h): </strong></p>\
+                                    <p style='margin-top: 28px'><strong>Stop Watering at (24h): </strong></p>\
+                                    <p style='margin-top: 25px'><strong>Zones: </strong></p>\
                                 </div>\
                                 <div class='col-md-8 water-control'>\
-                                    <input type='text' class='form-control water-onat' placeholder='eg: 14:00'>\
-                                    <input type='text' class='form-control water-offat' placeholder='eg: 16:00'>\
-                                    <div class='water-channels'>\
+                                    <div class='form-group'>\
+                                        <div class='water-time input-group'>\
+                                            <input data-format='hh:mm' type='text' value='12:00' class='form-control water-start' readonly='readonly'></input>\
+                                            <span class='input-group-addon'><span class='glyphicon glyphicon-time'></span></span>\
+                                        </div>\
+                                    </div>\
+                                    <div class='form-group'>\
+                                        <div class='water-time input-group'>\
+                                            <input data-format='hh:mm' type='text' value = '12:00' class='form-control water-stop' readonly='readonly'></input>\
+                                            <span class='input-group-addon'><span class='glyphicon glyphicon-time'></span></span>\
+                                        </div>\
+                                    </div>\
+                                    <div class='water-channels' style='margin-top: 10px'>\
                                         <label class='checkbox-inline'><input type='checkbox' id='0' value='channel1'> 1</label>\
                                         <label class='checkbox-inline'><input type='checkbox' id='1' value='channel2'> 2</label>\
                                         <label class='checkbox-inline'><input type='checkbox' id='2' value='channel3'> 3</label>\
@@ -153,14 +186,53 @@ function prepWebpage() {
                                 
         function newEntry() {
             $('#entries').append(entryHtml);
-        }  
+            var timepickers = $('.water-time');
+            
+            timepickers.each(function() {
+                $(this).datetimepicker({
+                    maskInput: true, // disable keyboard input
+                    pickDate: false,  // disable date input
+                    useSeconds: false // disable seconds input
+                });
+            });
+        }
+        
+        function pause() {
+            $('#pause').css('display', 'none');
+            $('#resume').css('display', 'inline');
+            var sendTo = document.URL+'/stop';
+            $.ajax({
+                url: sendTo,
+                type: 'GET'
+            });
+        }
+        
+        function resume() {
+            $('#resume').css('display', 'none');
+            $('#pause').css('display', 'inline');
+            var sendTo = document.URL+'/resume';        
+            $.ajax({
+                url: sendTo,
+                type: 'GET'
+            });
+        }
+        
+        function logSuccess() {
+            $('#schedulesetok').css('display', 'block');
+            window.setTimeout(function() { $('#schedulesetok').css('display','none'); }, 3000);
+        }
+        
+        function logError(xhr, status, error) {
+            console.log('error setting schedule: '+xhr.responseText+' : '+error);
+            $('#scheduleseterr').css('display', 'block');
+            window.setTimeout(function() { $('#scheduleseterr').css('display','none'); }, 3000);
+        }
         
         function save() {
             var sendTo = document.URL+'/setSchedule'
             
             var waterings = $('.water-control');
-            var schedule = {};
-            var i = 0;
+            var schedule = [];
             
             waterings.each(function() {
                 var channels = [];
@@ -169,22 +241,45 @@ function prepWebpage() {
                         channels.push(ch);
                     };
                 }
-                schedule[i] = {
-                    'onat': $(this).children()[0].value,
-                    'offat': $(this).children()[1].value,
+                schedule.push({
+                    'onat': $(this).find('.water-start')[0].value,
+                    'offat': $(this).find('.water-stop')[0].value,
                     'channels': channels
-                };
-                i++;
+                });
             });
             
             $.ajax({
                 url: sendTo,
                 type: 'POST',
-                dataType: 'application/json',
-                data: JSON.stringify(schedule)
+                data: JSON.stringify(schedule),
+                success: logSuccess,
+                error: logError
             });
-    
       }
+      
+      function showConnStatus(status) {
+          if (status == true) {
+              $('#disconnected').css('display', 'block');
+          } else {
+              $('#disconnected').css('display', 'none');
+          }
+          
+      }
+      
+      function connStatusError(xhr, status, error) {
+          console.log('error getting connection status: '+xhr.responseText+' : '+error);
+      }
+      
+      function getConnectionStatus() {
+          $.ajax({
+                url: document.URL+'/status',
+                type: 'GET',
+                success: showConnStatus,
+                error: connStatusError
+            });
+      }
+      
+      setInterval(getConnectionStatus, 3000);
     
       </script>
       </body>
@@ -192,10 +287,64 @@ function prepWebpage() {
     </html>"
 }
 
+// -----------------------------------------------------------------------------
+const WUNDERGROUND_KEY = "601381b054664daf";
+const WUNDERGROUND_URL = "http://api.wunderground.com/api";
+function get_lat_lon(location, callback = null) {
+    local url = format("%s/%s/geolookup/q/%s.json", WUNDERGROUND_URL, WUNDERGROUND_KEY, location);
+    http.get(url, {}).sendasync(function(res) {
+        if (res.statuscode != 200) {
+            server.log("Wunderground error: " + res.statuscode + " => " + res.body);
+            if (callback) callback(null, null);
+        } else {
+            try {
+                local json = http.jsondecode(res.body);
+                local lat = json.location.lat.tofloat();
+                local lon = json.location.lon.tofloat();
+
+                if (callback) callback(lat, lon);
+            } catch (e) {
+                server.error("Wunderground error: " + e)
+                if (callback) callback(null, null);
+            }
+            
+        }
+    });
+}
+
+// -----------------------------------------------------------------------------
+const GOOGLE_MAPS_URL = "https://maps.googleapis.com/maps/api";
+function get_tzoffset(lat, lon, callback = null) {
+    local url = format("%s/timezone/json?sensor=false&location=%f,%f&timestamp=%d", GOOGLE_MAPS_URL, lat, lon, time());
+    http.get(url, {}).sendasync(function(res) {
+        if (res.statuscode != 200) {
+            server.log("Google maps error: " + res.statuscode + " => " + res.body);
+            if (callback) callback(null);
+        } else {
+            try {
+                local json = http.jsondecode(res.body);
+                local dst = json.dstOffset.tofloat();
+                local raw = json.rawOffset.tofloat();
+                local tzoffset = ((raw+dst)/60.0/60.0);
+                
+                if (callback) callback(tzoffset);
+            } catch (e) {
+                server.error("Google maps error: " + e);
+                if (callback) callback(null);
+            }
+            
+        }
+    });
+}
+
 /* DEVICE EVENT CALLBACKS ====================================================*/ 
 
+device.on("getTZoffset", function(val) {
+    device.send("setTZoffset", SAVEDATA.TZOFFSET)
+});
+
 device.on("getSchedule", function(val) {
-    device.send("newSchedule", SCHEDULE);
+    device.send("newSchedule", SAVEDATA.SCHEDULE);
 });
 
 /* HTTP REQUEST HANDLER =======================================================*/ 
@@ -209,19 +358,28 @@ http.onrequest(function(req, res) {
     if (req.path == "/setSchedule" || req.path == "/setSchedule/") {
         server.log("Agent got new Schedule Set request");
         try {
-            SCHEDULE = http.jsondecode(req.body);
-            device.send("newSchedule", SCHEDULE);
+            SAVEDATA.SCHEDULE = http.jsondecode(req.body);
+            device.send("newSchedule", SAVEDATA.SCHEDULE);
             res.send(200, "Schedule Set");
             server.log("New Schedule Set: "+req.body);
-            server.save(SCHEDULE);
+            server.save(SAVEDATA);
         } catch (err) {
             server.log(err);
             res.send(400, "Invalid Schedule: "+err);
-        }
-        
+        }   
     } else if (req.path == "/getSchedule" || req.path == "/getSchedule/") {
         server.log("Agent got schedule request");
-        res.send(200,http.jsonencode(SCHEDULE));  
+        res.send(200,http.jsonencode(SAVEDATA.SCHEDULE));  
+    } else if (req.path == "/stop" || req.path == "/stop/") {
+        server.log("Agent requested to pause sprinkler");
+        device.send("pause",0);
+        res.send(200,"Sprinkler Stopped");
+    } else if (req.path == "/resume" || req.path == "/resume/") {
+        server.log("Agent requested to resume watering");
+        device.send("resume", SAVEDATA.SCHEDULE);
+        res.send(200,"Sprinkler Resumed");
+    } else if (req.path == "/status" || req.path == "/status/") {
+        res.send(200,device.isconnected());
     } else {
         server.log("Agent got unknown request");
         res.send(200, WEBPAGE);
@@ -231,5 +389,16 @@ http.onrequest(function(req, res) {
 /* RUNTIME BEGINS HERE =======================================================*/
 
 server.log("Sprinkler Agent Started.");
+location <- "CA/Los_Altos";
+// Get the time zone offset
+if (SAVEDATA.TZOFFSET == null) {
+    get_lat_lon(location, function(lat, lon) {    
+        get_tzoffset(lat, lon, function(tz) {
+            server.log("TZ OFFSET = "+tz);
+            SAVEDATA.TZOFFSET = tz;
+            server.save(SAVEDATA);
+        });
+    });
+}
 
 prepWebpage();
