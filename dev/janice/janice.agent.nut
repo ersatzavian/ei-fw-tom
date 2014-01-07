@@ -6,12 +6,12 @@
 /* CONSTS AND GLOBALS ========================================================*/
 
 // Watering Schedule
-SAVEDATA <- server.load(); // attempt to pick the schedule back up from the server in case of agent restart
-if (!("SCHEDULE" in SAVEDATA)) {
-    SAVEDATA.SCHEDULE <- [];
+saveData <- server.load(); // attempt to pick the schedule back up from the server in case of agent restart
+if (!("schedule" in saveData)) {
+    saveData.schedule <- [];
 } 
-if (!("TZOFFSET" in SAVEDATA)) {
-    SAVEDATA.TZOFFSET <- null;
+if (!("tzoffset" in saveData)) {
+    saveData.tzoffset <- null;
 }
 
 // UI webpage will be stored at global scope as a multiline string
@@ -340,11 +340,11 @@ function get_tzoffset(lat, lon, callback = null) {
 /* DEVICE EVENT CALLBACKS ====================================================*/ 
 
 device.on("getTZoffset", function(val) {
-    device.send("setTZoffset", SAVEDATA.TZOFFSET)
+    device.send("setTZoffset", saveData.tzoffset)
 });
 
 device.on("getSchedule", function(val) {
-    device.send("newSchedule", SAVEDATA.SCHEDULE);
+    device.send("newSchedule", saveData.schedule);
 });
 
 /* HTTP REQUEST HANDLER =======================================================*/ 
@@ -355,31 +355,40 @@ http.onrequest(function(req, res) {
     res.header("Access-Control-Allow-Headers","Origin, X-Requested-With, Content-Type, Accept");
     res.header("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
 
+    /* Handle new schedule set by user with web UI */
     if (req.path == "/setSchedule" || req.path == "/setSchedule/") {
         server.log("Agent got new Schedule Set request");
         try {
-            SAVEDATA.SCHEDULE = http.jsondecode(req.body);
-            device.send("newSchedule", SAVEDATA.SCHEDULE);
+            saveData.schedule = http.jsondecode(req.body);
+            // forward schedule to device
+            device.send("newSchedule", saveData.schedule);
+            // respond to web UI 
             res.send(200, "Schedule Set");
             server.log("New Schedule Set: "+req.body);
-            server.save(SAVEDATA);
+            // store schedule in case of agent reset
+            server.save(saveData);
         } catch (err) {
             server.log(err);
             res.send(400, "Invalid Schedule: "+err);
         }   
+    /* Serve current schedule to web UI when requested */
     } else if (req.path == "/getSchedule" || req.path == "/getSchedule/") {
         server.log("Agent got schedule request");
-        res.send(200,http.jsonencode(SAVEDATA.SCHEDULE));  
+        res.send(200,http.jsonencode(saveData.schedule));  
+    /* Stop any current watering and inhibit the start of other events while paused */
     } else if (req.path == "/stop" || req.path == "/stop/") {
         server.log("Agent requested to pause sprinkler");
         device.send("pause",0);
         res.send(200,"Sprinkler Stopped");
+    /* Resume watering after being paused */
     } else if (req.path == "/resume" || req.path == "/resume/") {
         server.log("Agent requested to resume watering");
         device.send("resume", SAVEDATA.SCHEDULE);
         res.send(200,"Sprinkler Resumed");
+    /* The web UI will poll here for the device connection status */
     } else if (req.path == "/status" || req.path == "/status/") {
         res.send(200,device.isconnected());
+    /* Requests directly to the agent URL are assumed to be new requests for the web UI */
     } else {
         server.log("Agent got unknown request");
         res.send(200, WEBPAGE);
@@ -389,14 +398,18 @@ http.onrequest(function(req, res) {
 /* RUNTIME BEGINS HERE =======================================================*/
 
 server.log("Sprinkler Agent Started.");
+/* the electric imp API roadmap includes a story to allow the agent to know 
+ * where the device is, which will later be used to set the location and determine
+ * the time zone programatically. */
 location <- "CA/Los_Altos";
-// Get the time zone offset
-if (SAVEDATA.TZOFFSET == null) {
+
+// Get the time zone offset if it was not loaded with server.load().
+if (saveData.tzoffset == null) {
     get_lat_lon(location, function(lat, lon) {    
         get_tzoffset(lat, lon, function(tz) {
-            server.log("TZ OFFSET = "+tz);
-            SAVEDATA.TZOFFSET = tz;
-            server.save(SAVEDATA);
+            server.log("GMT Offset = "+tz+" hours.");
+            saveData.tzoffset = tz;
+            server.save(saveData);
         });
     });
 }

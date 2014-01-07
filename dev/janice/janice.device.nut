@@ -1,6 +1,6 @@
 /* Janice Sprinkler Controller Device Firmware
  * Tom Byrne
- * 12/19/13
+ * 1/7/14
  */
  
 /* CONSTS and GLOBAL VARS ====================================================*/
@@ -10,12 +10,6 @@ channelStates <- 0;      // Byte to store current state of sprinkler channels
 INHIBIT       <- false;  // flag to allow us to globally pause watering
 const WIFI_TIMEOUT = 30; // time in seconds to allow a connection attempt to wait
 const RECONNECT_PERIOD = 1; // time between reconnect attempts (minutes)
-enum STATUS {
-    CONNECTED,
-    DISCONNECTED,
-    ERROR
-};
-const BLINK_INTERVAL        = 0.5; // blink interval for status LED in seconds
 
 scheduledEvents <- []; // array of timer IDs for scheduled watering events. This
 // allows these events to be cancelled before they occur if a new schedule comes in.
@@ -609,12 +603,74 @@ class cat24c {
     }
 }
 
+/* Log wrapper to redirect log messages if we're disconnected.
+ * If this wrapper detects that we do not have a display object,
+ * it will return silently.
+ */
+function log(msg) {
+    // test if we're connected to wifi
+    if (server.isconnected()) {
+        server.log(msg);
+    // if we're not on wifi, test if we have a display object instantiated
+    } else if ("disp" in this) {
+        disp.write(msg);
+    // if we have no way to log, give up
+    } else {
+        return;
+    }
+}
+
+/* Class for a status LED. Different patterns can be set for different states.
+ * Constructor takes an pre-configured LED pin.
+ *
+ * As shown, statusLed.set takes a single argument: any of the elements of the
+ * STATUS enum below.
+ *
+ * STATUS.CONNECTED         -> solid light
+ * STATUS.DISCONNECTED      -> blinking light
+ * STATUS.ERROR             -> light off
+ */
+const BLINK_INTERVAL = 0.5; // blink interval for status LED in seconds
+enum STATUS {
+    CONNECTED,
+    DISCONNECTED,
+    ERROR
+};
+class statusLed {
+    led = null;
+    blinkTimerHandle = null; // handle for blinking status wakeup timer
+
+    constructor(_led) {
+        this.led = _led;
+    }
+
+    function toggle() {
+        blinkTimerHandle = imp.wakeup(BLINK_INTERVAL, toggle.bindenv(this));
+        if (this.led.read() > 0) {
+            this.led.write(0.0);
+        } else {
+            this.led.write(1.0)
+        }
+    }
+
+    function set(status) {
+        // cancel any blink timer currently running
+        if (blinkTimerHandle) {imp.cancelwakeup(blinkTimerHandle);}
+            
+        if (status == STATUS.CONNECTED)         {this.led.write(1.0);}
+        else if (status == STATUS.DISCONNECTED) {
+            blinkTimerHandle = imp.wakeup(BLINK_INTERVAL, toggle.bindenv(this));}
+        else if (status == STATUS.ERROR)      {led.write(0.0);}
+    }
+}
+
+
 /* Calculate seconds from now until a given time.
  * Input: 
  *      now - a date object representing the current time
  *      targetStr - a 24-hour hours/minutes string, e.g. "12:34"
  * Return:
- *      seconds in integers until the target time will next occur
+ *      seconds as an integer until the target time will next occur
  */
 function secondsTil(now,targetStr) {
     local data = split(targetStr,":");
@@ -632,11 +688,6 @@ function secondsTil(now,targetStr) {
     result += (target.hour - now.hour) * 3600;
     result += (target.min - now.min) * 60;
     return result;
-}
-
-/* Rain Sensor Handler */
-function rainStateChanged() {
-    server.log("Rain Sensor: "+rain_sns_l.read());
 }
 
 /* Set Sprinkler Channel States */
@@ -677,47 +728,6 @@ function allOff() {
     sr_output_en_l.write(0);   
 }
 
-function log(msg) {
-    // test if we're connected to wifi
-    if (server.isconnected()) {
-        server.log(msg);
-    // if we're not on wifi, test if we have a display object instantiated
-    } else if ("disp" in this) {
-        disp.write(msg);
-    // if we have no way to log, give up
-    } else {
-        return;
-    }
-}
-
-blinkTimerHandle <- 0; // handle for blinking status wakeup timer
-function toggleStatusLed() {
-    blinkTimerHandle = imp.wakeup(BLINK_INTERVAL, toggleStatusLed);
-    if (status_brightness.read() > 0) {
-        status_brightness.write(0.0);
-    } else {
-        status_brightness.write(1.0)
-    }
-}
-
-function setStatusLed(status) {
-    if ("disp" in this) {
-        // this means we have a display instantiated and the status light is 
-        // being used to set brightness.
-        if (status == STATUS.CONNECTED)         {disp.write("Connected.");}
-        else if (status == STATUS.DISCONNECTED) {disp.write("Connection Lost.");} 
-        else if (status == STATUS.ERROR)        {disp.write("Schedule Lost");}
-    } else {
-        // if we're here, the status changed, so cancel an existing blink timers
-        if (blinkTimerHandle) {imp.cancelwakeup(blinkTimerHandle);}
-        
-        if (status == STATUS.CONNECTED)         {status_brightness.write(1.0);}
-        else if (status == STATUS.DISCONNECTED) {
-            blinkTimerHandle = imp.wakeup(BLINK_INTERVAL, toggleStatusLed);}
-        else if (status == STATUS.ERROR)      {status_brightness.write(0.0);}
-    }
-}
-
 /* Load the schedule table from the EEPROM */
 function loadSchedule() {
     // the length of the serialized object is stored in the first 2 bytes of the eeprom
@@ -755,7 +765,7 @@ function saveSchedule(schedule) {
 
 function cancelAllEvents() {
     while (scheduledEvents.len() > 0) {
-        imp.cancelwakeup(sheduledEvents.pop());
+        imp.cancelwakeup(scheduledEvents.pop());
     }
 }
 
@@ -765,7 +775,7 @@ function scheduleWatering(schedule) {
     // return and wait for connection to come up
     if (schedule == null) {
         log("Error: No Schedule.");
-        setStatusLed(STATUS.ERROR);
+        led.set(STATUS.ERROR);
         return;
     }
     
@@ -779,9 +789,13 @@ function scheduleWatering(schedule) {
     }
      
     foreach(waterevent in schedule) {
+        
+        /* the list of channels must be local so that bindenv will hold it */
         local mychannels = waterevent.channels;
         
-        // schedule the watering starts
+        /* SCHEDULE WATERING STARTS -----------------------------------------*/
+        /* scheduled callback handles are added to the scheduledEvents array so
+         * they can be later cancelled. */
         local handle = imp.wakeup(secondsTil(now,waterevent.onat), function() {
             local channelList = "";
             foreach(channel in mychannels) {
@@ -791,10 +805,12 @@ function scheduleWatering(schedule) {
                 }
             }
             log(format("Starting Scheduled Watering, Channels: %s", channelList));
+        /* Bindenv "binds" this callback to the current environment, 
+         * so the channel array will be remembered */
         }.bindenv(this));
         scheduledEvents.push(handle);
 
-        // schedule the watering stops
+        /* SCHEDULE WATERING STOPS ------------------------------------------*/
         handle = imp.wakeup(secondsTil(now,waterevent.offat), function() {
             local channelList = "";
             foreach(channel in mychannels) {
@@ -805,8 +821,10 @@ function scheduleWatering(schedule) {
         }.bindenv(this));
         scheduledEvents.push(handle);
         
+        /* if we're in the middle of a watering event when the schedule is received,
+         * start immediately. */
         if (secondsTil(now,waterevent.offat) < secondsTil(now,waterevent.onat)) {
-            foreach(channel in mychannels) {
+            foreach(channel in waterevent.channels) {
                 if (!INHIBIT) {
                     setChannel(channel, 1);
                 }
@@ -822,13 +840,17 @@ function scheduleWatering(schedule) {
        log(format("On: %s, Off: %s, Channels: %s",waterevent.onat,
             waterevent.offat, channelList));
     }
-    
-    server.log("Scheduled "+scheduledEvents.len()+" events.");
 }
 
 /* Grab the schedule from the agent or the on-board EEPROM, depending on 
  * Connection status. If the schedule is received from the agent, it will be
  * saved to the EEPROM for future use.
+ *
+ * If we're connected to the agent, we first request the GMT offset so that 
+ * we have it before we attempt to set the schedule. A schedule request will
+ * be sent to the agent when the GMT offset is received.
+ * 
+ * If we're offline, the GMT offset will be stored in the EEPROM with the schedule.
  */
 function getSchedule() {
     if (server.isconnected()) {
@@ -885,14 +907,21 @@ beeper          <- hardware.pin1;
 disp_reset_l    <- hardware.pin2;
 sr_output_en_l  <- hardware.pin6;
 sr_load         <- hardware.pinA;
-status_brightness <- hardware.pinC;
+led_pin         <- hardware.pinC;
 rain_sns_l      <- hardware.pinD;
 spi             <- hardware.spi257;
 
 beeper.configure(PWM_OUT, 1.0/1000, 0.0);
-status_brightness.configure(PWM_OUT, 1.0/1000, 0.0);
+led_pin.configure(PWM_OUT, 1.0/1000, 0.0);
 
+led <- statusLed(led_pin);
+
+/* Rain Sensor Handler */
+function rainStateChanged() {
+    server.log("Rain Sensor: "+rain_sns_l.read());
+}
 rain_sns_l.configure(DIGITAL_IN_PULLUP, rainStateChanged);
+
 spi.configure(SIMPLEX_TX | MSB_FIRST | CLOCK_IDLE_HIGH, 4000);
 sr_output_en_l.configure(DIGITAL_OUT);
 sr_output_en_l.write(1);
@@ -947,13 +976,13 @@ log(format("RTC Set to %02d:%02d:%02d, %02d/%02d/%02d",rtc.hour(),
 // to set the the send timeout policy to RETURN_ON_ERROR (manual connect) 
 // immediately so we can keep doing our plant-watering job. 
 server.onunexpecteddisconnect(function(err) {
-    setStatusLight(STATUS.DISCONNECTED);
+    led.set(STATUS.DISCONNECTED);
     server.setsendtimeoutpolicy(RETURN_ON_ERROR, WAIT_TIL_SENT, WIFI_TIMEOUT);
     // this is also a good time to set up some reconnection attempts
     imp.wakeup((60*RECONNECT_PERIOD), function() {
         imp.wakeup((60*RECONNECT_PERIOD), this);
         server.connect(function() {
-            setStatusLed(STATUS.CONNECTED);
+            led.set(STATUS.CONNECTED);
             rtc.sync();
             getSchedule();
         }, WIFI_TIMEOUT);
@@ -962,11 +991,11 @@ server.onunexpecteddisconnect(function(err) {
 
 // if we're connected now, sync up with the agent
 if (server.isconnected()) {
-    setStatusLed(STATUS.CONNECTED);
+    led.set(STATUS.CONNECTED);
     // we update the imp's internal RTC when we connect
     rtc.sync();
 } else {
-    setStatusLight(STATUS.DISCONNECTED);
+    led.set(STATUS.DISCONNECTED);
     server.setsendtimeoutpolicy(RETURN_ON_ERROR, WAIT_TIL_SENT, WIFI_TIMEOUT);
 }
 
