@@ -36,7 +36,6 @@ function prepWebpage() {
         <title>Janice</title>
         <link href='data:image/x-icon;base64,AAABAAEAEBAAAAAAAABoBAAAFgAAACgAAAAQAAAAIAAAAAEAIAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAD///8A////AP///wD///8A////AP///wD///8AcHBwMl9rT65DZwZX////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8Aam9ioUxuHv9FbgX/Q28DV////wD///8A////AP///wD///8A////AP///wD///8A////AP///wByb29VU3Qz/UZ1Bv9GdQb/RnUG/0Z1Blf///8A////AP///wD///8A////AP///wD///8A////AP///wD///8ASn0U+0d9CP9HfQj/R30I/0d9CP9WeC+RbW1tFf///wD///8A////AP///wD///8A////AP///wD///8A////AEmEBf9JhAX/SYQF/0mEBf9JhAX/S4sYoGV8W/lxbGw0////AP///wD///8A////AP///wD///8A////AP///wBKiwb/SosG/0qLBv9Kiwb/SosG/02RIKBQmD7/VpNH/211aNp1amoY////AP///wD///8A////AP///wD///8AS5IA/0uSAP9LkgD/S5IA/0qTAP5OmSaUUp5N/1KeTf9Snk3/YIxcv////wD///8A////AP///wD///8A////AE2aAP9NmgD/TZoA/0yaAO1OmgaDXZhdaFSkV/9UpFf/VKRX/1eiWb////8A////AP///wD///8A////AP///wBNngD/TZ4A/02eAPxQnQlwaYBcUFypTqBWp1z/Vqdc/1anXP9YpF2/////AP///wD///8A////AP///wD///8AT6YA/06mALRreWVyaada+Ga3Uf9gtFugWK9l/1ivZf9Yr2X/Watnv////wD///8A////AP///wD///8A////AFGrAExup2x0a75p/2u+af9rvmn/aL1qZVu1cOBbtm//W7Zv/12zb7////8A////AP///wD///8A////AP///wD///8AcMN/u3DEfv9wxH7/cMR+/2/EflcA//8BXr53jV++eP9gune/////AP///wD///8A////AP///wD///8A////AHfIkbt3yZH/d8mR/3fJkf94ypBX////AP///wD///8BYcSAhv///wD///8A////AP///wD///8A////AP///wB9z6K7fs+j/37Po/9+zqLnZsyZBf///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8Ag9O0u4PUs+WD07Yj////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AIjcxjr///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A/38AAPx/AAD4fwAA8D8AAPAfAADwBwAA8AMAAPBDAADxgwAA8gMAAPxDAAD4YwAA+HsAAPh/AAD5/wAA//8AAA==' rel='icon' type='image/x-icon' /> 
         <link href='https://netdna.bootstrapcdn.com/bootstrap/3.0.2/css/bootstrap.min.css' rel='stylesheet'>
-        <link href='http://demo.electricimp.com/bootstrap-datetimepicker/bootstrap-datetimepicker.min.css' rel='stylesheet'>
     
       </head>
       <body>
@@ -108,8 +107,6 @@ function prepWebpage() {
       <!-- javascript -->
       <script src='https://cdnjs.cloudflare.com/ajax/libs/jquery/2.0.3/jquery.min.js'></script>
       <script src='https://netdna.bootstrapcdn.com/bootstrap/3.0.2/js/bootstrap.min.js'></script>
-      <script src='https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.5.0/moment.min.js'></script>
-      <script src='http://demo.electricimp.com/bootstrap-datetimepicker/bootstrap-datetimepicker.min.js'></script>
     
       <script>
       
@@ -151,22 +148,16 @@ function prepWebpage() {
         
         var entryHtml = " + "\""+@"<div class='well row' style='width: 80%; margin-left: 20px;'>\
                                 <div class='col-md-4'>\
-                                    <p style='margin-top: 8px'><strong>Start watering at (24h): </strong></p>\
-                                    <p style='margin-top: 28px'><strong>Stop Watering at (24h): </strong></p>\
-                                    <p style='margin-top: 25px'><strong>Zones: </strong></p>\
+                                    <p style='margin-top: 10px'><strong>Start watering at: </strong></p>\
+                                    <p style='margin-top: 20px'><strong>Stop Watering at: </strong></p>\
+                                    <p style='margin-top: 20px'><strong>Zones: </strong></p>\
                                 </div>\
                                 <div class='col-md-8 water-control'>\
-                                    <div class='form-group'>\
-                                        <div class='water-time input-group'>\
-                                            <input data-format='hh:mm' type='time' value='12:00' class='form-control water-start' readonly='readonly'></input>\
-                                            <span class='input-group-addon'><span class='glyphicon glyphicon-time'></span></span>\
-                                        </div>\
+                                    <div class='water-time'>\
+                                        <p><input data-format='hh:mm' type='time' value='12:00' class='form-control water-start'></input></p>\
                                     </div>\
-                                    <div class='form-group'>\
-                                        <div class='water-time input-group'>\
-                                            <input data-format='hh:mm' type='time' value = '12:00' class='form-control water-stop' readonly='readonly'></input>\
-                                            <span class='input-group-addon'><span class='glyphicon glyphicon-time'></span></span>\
-                                        </div>\
+                                    <div class='water-time'>\
+                                        <p><input data-format='hh:mm' type='time' value='12:00' class='form-control water-stop'></input></p>\
                                     </div>\
                                     <div class='water-channels' style='margin-top: 10px'>\
                                         <label class='checkbox-inline'><input type='checkbox' id='0' value='channel1'> 1</label>\
@@ -186,15 +177,6 @@ function prepWebpage() {
                                 
         function newEntry() {
             $('#entries').append(entryHtml);
-            var timepickers = $('.water-time');
-            
-            timepickers.each(function() {
-                $(this).datetimepicker({
-                    maskInput: true, // disable keyboard input
-                    pickDate: false,  // disable date input
-                    useSeconds: false // disable seconds input
-                });
-            });
         }
         
         function pause() {

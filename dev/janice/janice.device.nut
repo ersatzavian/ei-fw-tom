@@ -740,8 +740,8 @@ class waterSchedule {
         local data = split(targetStr,":");
         local target = { hour = data[0].tointeger(), min = data[1].tointeger() };
         target.hour -= this.gmtoffset;
-        if (target.hour < 0) {
-            target.hour += 23;
+        if (target.hour > 23) {
+            target.hour -= 24;
         }
 
         local now = null;
@@ -819,8 +819,8 @@ class waterSchedule {
             return;
         }
         
-        // cancel any existing scheduled events before scheduling new ones
-        this.cancel();
+        // stop watering andcancel any existing scheduled events before scheduling
+        this.halt();
          
         foreach(waterevent in this.schedule) {
             
@@ -855,6 +855,7 @@ class waterSchedule {
             
             /* if we're in the middle of a watering event when the schedule is received,
              * start immediately. */
+            server.log(format("Off in %d, On in %d",secondsTil(waterevent.offat),secondsTil(waterevent.onat)));
             if (secondsTil(waterevent.offat) < secondsTil(waterevent.onat)) {
                 foreach(channel in waterevent.channels) {
                     setChannel(channel, 1);
