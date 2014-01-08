@@ -1,9 +1,33 @@
+/*
+Copyright (C) 2013 electric imp, inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software 
+and associated documentation files (the "Software"), to deal in the Software without restriction, 
+including without limitation the rights to use, copy, modify, merge, publish, distribute, 
+sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is 
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial 
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, 
+INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE 
+AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, 
+DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, 
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+*/
+
 /* Janice Sprinkler Controller Agent Firmware
  * Tom Byrne
- * 12/19/13
+ * 1/7/14
  */ 
  
 /* CONSTS AND GLOBALS ========================================================*/
+
+/* ADD YOUR WEATHER UNDERGROUND KEY HERE. 
+ * to get a weather underground key, go to http://www.wunderground.com/weather/api/
+ */
+const WUNDERGROUND_KEY = "YOUR KEY HERE";
 
 // Watering Schedule
 saveData <- server.load(); // attempt to pick the schedule back up from the server in case of agent restart
@@ -260,7 +284,6 @@ function prepWebpage() {
 }
 
 // -----------------------------------------------------------------------------
-const WUNDERGROUND_KEY = "601381b054664daf";
 const WUNDERGROUND_URL = "http://api.wunderground.com/api";
 function get_lat_lon(location, callback = null) {
     local url = format("%s/%s/geolookup/q/%s.json", WUNDERGROUND_URL, WUNDERGROUND_KEY, location);
