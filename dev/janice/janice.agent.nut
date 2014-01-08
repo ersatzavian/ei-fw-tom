@@ -15,7 +15,7 @@ if (!("gmtoffset" in saveData)) {
 }
 
 // UI webpage will be stored at global scope as a multiline string
-WEBPAGE <- @"<h2>Agent initializing, please refresh.</h2>";
+WEBPAGE <- @"Agent initializing, please refresh.";
 
 /* GLOBAL FUNCTIONS AND CLASS DEFINITIONS ====================================*/
 
@@ -40,7 +40,7 @@ function prepWebpage() {
       </head>
       <body>
 
-        <nav id='top' class='navbar navbar-fixed-top navbar-inverse' role='navigation'>
+        <nav id='top' class='navbar navbar-static-top navbar-inverse' role='navigation'>
           <div class='container'>
             <div class='navbar-header'>
               <button type='button' class='navbar-toggle' data-toggle='collapse' data-target='.navbar-ex1-collapse'>
@@ -61,7 +61,7 @@ function prepWebpage() {
         </nav>
         
         <div class='container'>
-          <div class='row' style='margin-top: 80px'>
+          <div class='row' style='margin-top: 20px'>
             <div class='col-md-offset-2 col-md-8 well'>
                 <div id='disconnected' class='alert alert-warning' style='display:none'>
                     <button type='button' class='close' data-dismiss='alert' aria-hidden='true'>&times;</button>
@@ -107,19 +107,18 @@ function prepWebpage() {
       <!-- javascript -->
       <script src='https://cdnjs.cloudflare.com/ajax/libs/jquery/2.0.3/jquery.min.js'></script>
       <script src='https://netdna.bootstrapcdn.com/bootstrap/3.0.2/js/bootstrap.min.js'></script>
-    
       <script>
       
         function showSchedule(rawdata) {
             console.log('got schedule from agent: '+rawdata);
-            var data = JSON.parse(rawdata);
-            if (data.length > 0) {
-                for (var i = 0; i < data.length; i++) {
+            var schedule = JSON.parse(rawdata);
+            if (schedule.length > 0) {
+                for (var i = 0; i < schedule.length; i++) {
                     newEntry();
-                    $('.water-start').last()[0].value = data[i].onat;
-                    $('.water-stop').last()[0].value = data[i].offat;
-                    for (var j = 0; j < data[i].channels.length; j++) {
-                        var ch = data[i].channels[j];
+                    $('.water-start').last()[0].value = schedule[i].onat;
+                    $('.water-stop').last()[0].value = schedule[i].offat;
+                    for (var j = 0; j < schedule[i].channels.length; j++) {
+                        var ch = schedule[i].channels[j];
                         $('.water-channels').last().find('#'+ch)[0].checked = 1;
                     }
                 }
@@ -136,15 +135,6 @@ function prepWebpage() {
                 console.log('error in ajax call!');
             }
         });
-      
-        function logSuccess(title, message, autoclear) {
-            autoclear = autoclear || true;
-            var t = new Date().getTime();
-            $('#top').append('<div id=\'' + t + '\' class=\'alert alert-success\'><button type=\'button\' class=\'close\' data-dismiss=\'alert\'>x</button><strong>' + title + '</strong>&nbsp;' + message + '</div>');
-            if (autoclear) {
-                window.setTimeout(function() { $('#' + t).alert('close'); }, 3000);
-            }
-        }
         
         var entryHtml = " + "\""+@"<div class='well row' style='width: 80%; margin-left: 20px;'>\
                                 <div class='col-md-4'>\
@@ -182,7 +172,7 @@ function prepWebpage() {
         function pause() {
             $('#pause').css('display', 'none');
             $('#resume').css('display', 'inline');
-            var sendTo = document.URL+'/stop';
+            var sendTo = document.URL+'/halt';
             $.ajax({
                 url: sendTo,
                 type: 'GET'
@@ -261,7 +251,7 @@ function prepWebpage() {
             });
       }
       
-      setInterval(getConnectionStatus, 3000);
+      setInterval(getConnectionStatus, 60000);
     
       </script>
       </body>
@@ -371,7 +361,7 @@ http.onrequest(function(req, res) {
         server.log("Agent got schedule request");
         res.send(200,http.jsonencode(saveData.schedule));  
     /* Stop any current watering and inhibit the start of other events while paused */
-    } else if (req.path == "/stop" || req.path == "/stop/") {
+    } else if (req.path == "/halt" || req.path == "/halt/") {
         server.log("Agent requested to pause sprinkler");
         device.send("halt",0);
         res.send(200,"Sprinkler Stopped");

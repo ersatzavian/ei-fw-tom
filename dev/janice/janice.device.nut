@@ -855,7 +855,6 @@ class waterSchedule {
             
             /* if we're in the middle of a watering event when the schedule is received,
              * start immediately. */
-            server.log(format("Off in %d, On in %d",secondsTil(waterevent.offat),secondsTil(waterevent.onat)));
             if (secondsTil(waterevent.offat) < secondsTil(waterevent.onat)) {
                 foreach(channel in waterevent.channels) {
                     setChannel(channel, 1);
