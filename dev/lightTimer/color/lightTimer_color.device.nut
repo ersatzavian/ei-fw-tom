@@ -11,8 +11,7 @@ const pwm_f = 1000.0;
 
 /* FUNCTION AND CLASS DEFINITIONS --------------------------------------------*/
 
-
-/* AGENT CALLBACK HANDLERS --------------------------------------------------*/
+/* AGENT CALLBACK HANDLERS ---------------------------------------------------*/
 
 agent.on("setColor", function(colorTuple) {
     local red = (colorTuple.r * 1.0) / (256.0);
@@ -30,6 +29,8 @@ agent.on("setColor", function(colorTuple) {
 
 /* RUNTIME BEGINS HERE -------------------------------------------------------*/
 
+// Let the agent know we've just reset
+agent.send("juststarted",0);
 
 // Configure hardware
 r1 <- hardware.pin1;
@@ -39,11 +40,9 @@ g2 <- hardware.pin9;
 b1 <- hardware.pin2;
 b2 <- hardware.pin5;
 
-r1.configure(PWM_OUT, 1.0/pwm_f, 256.0, 256);
-r2.configure(PWM_OUT, 1.0/pwm_f, 256.0, 256);
-g1.configure(PWM_OUT, 1.0/pwm_f, 256.0, 256);
-g2.configure(PWM_OUT, 1.0/pwm_f, 256.0, 256);
-b1.configure(PWM_OUT, 1.0/pwm_f, 256.0, 256);
-b2.configure(PWM_OUT, 1.0/pwm_f, 256.0, 256);
-
-imp.configure("Light Timer - Color",[],[]);
+r1.configure(PWM_OUT, 1.0/pwm_f, 0);
+r2.configure(PWM_OUT, 1.0/pwm_f, 0);
+g1.configure(PWM_OUT, 1.0/pwm_f, 0);
+g2.configure(PWM_OUT, 1.0/pwm_f, 0);
+b1.configure(PWM_OUT, 1.0/pwm_f, 0);
+b2.configure(PWM_OUT, 1.0/pwm_f, 0);

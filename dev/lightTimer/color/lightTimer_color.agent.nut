@@ -5,362 +5,383 @@
  * 12/6/13
  */
  
-/* WEB PAGE AS STRING --------------------------------------------------------*/
-webpage <- @"
 
-<!DOCTYPE html>
-<html lang='en'>
-  <head>
-    <meta charset='utf-8'>
-    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
-    <meta name='description' content=''>
-    <meta name='author' content=''>
+/* CONSTS AND GLOBALS --------------------------------------------------------*/
 
-    <title>Light Timer - Scheduling</title>
+const WUNDERGROUND_KEY = "YOUR KEY HERE";
 
-    <!-- Bootstrap core CSS -->
-    <link href='https://netdna.bootstrapcdn.com/bootstrap/3.0.2/css/bootstrap.min.css' rel='stylesheet'>
-
-  </head>
-
-  <body>
-
-    <nav id='top' class='navbar navbar-fixed-top navbar-inverse' role='navigation'>
-      <div class='container'>
-        <div class='navbar-header'>
-          <button type='button' class='navbar-toggle' data-toggle='collapse' data-target='.navbar-ex1-collapse'>
-            <span class='sr-only'>Toggle navigation</span>
-            <span class='icon-bar'></span>
-            <span class='icon-bar'></span>
-            <span class='icon-bar'></span>
-          </button>
-          <a class='navbar-brand'>Imp Light Scheduler</a>
-        </div>
-
-        <!-- Collect the nav links, forms, and other content for toggling -->
-        <div class='collapse navbar-collapse navbar-ex1-collapse'>
-          <ul class='nav navbar-nav'>
-          </ul>
-        </div><!-- /.navbar-collapse -->
-      </div><!-- /.container -->
-    </nav>
-    
-    <div class='container'>
-      <div class='row' style='margin-top: 80px'>
-    	<div class='col-md-offset-2 col-md-8 well'>
-			<div class='row'>
-			  <div class='col-md-12 form-group'>
-			  	<h2 style='display: inline'>Lighting Schedule</h2>
-			  	<button type='button' class='btn btn-default' style='vertical-align: top; margin-left: 15px;' onclick='newLight()'><span class='glyphicon glyphicon-plus'></span> New</button></div>
-			  <div id='light'>
-			  </div>
-			</div>
-			<div class='row'>
-			  <div class='col-md-4'>
-			  	<button type='button' class='btn btn-primary' style='margin-top: 36px;' onclick='save()'>Save</button>
-			  </div>
-			</div>
-		</div>
-      </div>
-      <hr>
-
-      <footer>
-        <div class='row'>
-          <div class='col-lg-12'>
-            <p class='text-center'>Copyright &copy; Electric Imp 2013 &middot; <a href='http://facebook.com/electricimp'>Facebook</a> &middot; <a href='http://twitter.com/electricimp'>Twitter</a></p>
-          </div>
-        </div>
-      </footer>
-      
-    </div><!-- /.container -->
-
-  <!-- javascript -->
-  <script src='https://cdnjs.cloudflare.com/ajax/libs/jquery/2.0.3/jquery.min.js'></script>
-  <script src='https://netdna.bootstrapcdn.com/bootstrap/3.0.2/js/bootstrap.min.js'></script>
-  <script type='text/javascript' src='https://cdn.firebase.com/v0/firebase.js'></script>
-
-  <script>
-    console.log('Javascript made it!');
-  
-    function logSuccess(title, message, autoclear) {
-		autoclear = autoclear || true;
-		var t = new Date().getTime();
-		$('#top').append('<div id=\'' + t + '\' class=\'alert alert-success\'><button type=\'button\' class=\'close\' data-dismiss=\'alert\'>x</button><strong>' + title + '</strong>&nbsp;' + message + '</div>');
-		if (autoclear) {
-			window.setTimeout(function() { $('#' + t).alert('close'); }, 3000);
-		}
-	}
-	
-    var LightsBase = new Firebase('https://lights.firebaseio.com/schedule/onoff/lights');
-    
-	LightsBase.once('value', function(snapshot) {
-		var lightschedule = snapshot.val();
-        
-        console.log('Got Schedule from Firebase:');
-        for(var key in lightschedule) {
-            console.log(key+' : '+lightschedule[key]);
-        }
-		
-		for(var key in lightschedule) {
-			newLight();
-			$('.light-control').last().children()[0].value = lightschedule[key].onat;
-			$('.light-control').last().children()[1].value = lightschedule[key].onfor;
-		}
-    });
-	
-	var lightHtml = " + "\"<div class='well row' style='width: 80%; margin-left: 20px;'><div class='col-md-4'><p style='margin-top: 10px'><strong>Turn light on at (24h): </strong></p><p style='margin-top: 10px'><strong>Keep lights on for (min): </strong></p></div><div class='col-md-3 light-control'><input type='text' class='form-control light-onat' placeholder='eg: 14:00'><input type='text' class='form-control light-onfor' placeholder='eg: 15 minutes'></div><div class='col-md-2 col-md-offset-3'><button type='button' class='btn btn-danger' style='margin-top: 68px;' onclick='$(this).parent().parent().remove();'>Remove</button></div></div>\";" + @"
-	
-    function newLight() {
-		$('#light').append(lightHtml);
-	}  
-	
-	function save() {
-		var sendTo = document.URL+'/schedule'
-		
-		var lightTimes = $('.light-control');
-		var schedule = { 'lights': []};
-		
-		lightTimes.each(function() {
- 			schedule.lights.push({
-				'onat': $(this).children()[0].value,
-				'onfor': $(this).children()[1].value,
-			});
-		});
-		
-		$.ajax({
-			url: sendTo,
-			type: 'POST',
-			dataType: 'application/json',
-			data: JSON.stringify(schedule)
-		});
-        
-        var lightschedule = new Firebase('https://lights.firebaseio.com/schedule/onoff');
-
-        lightschedule.update(schedule, function(error) {
-            if (error) alert('Synchronization failed.');
-            else logSuccess('Success!', 'Schedule updated!');
-        });
-
-  }
-
-  </script>
-  </body>
-
-</html>"
-
-/* OTHER CONSTS AND GLOBALS --------------------------------------------------*/
-
-controllerID <- 0;  // 433 MHz Comen Controller ID
-
-const FIREBASEKEY = "YBPIBNwB349ri0rcFz8KzWUENukB0936Bq99QBY0";
-const DBASE = "lights";
-const FBRATELIMIT = 1; //minimum time between firebase posts
-
-// Device Schedule
-SCHED <- {lights = []};
+WEBPAGE <- "Agent initializing, please refresh";
+refreshtime <- "00:00";
+lightstate <- 0;
+scheduledEvents <- [];
+location <- "CA/Los_Altos";
+saveData <- server.load();
 
 /* FUNCTION AND CLASS DEFINITIONS --------------------------------------------*/
 
-/* Generic function to convert a binary blob to a hex string
- * Input:
- *      data: a binary blob of arbitrary length
- * Return:
- *      str:  a hex string representing the original binary blob
- */
-function BlobToHexString(data) {
-  local str = "0x";
-  foreach (b in data) str += format("%02x", b);
-  return str;
+function prepWebpage() {
+    WEBPAGE = @"
+    <!DOCTYPE html>
+    <html lang='en'>
+      <head>
+        <meta charset='utf-8'>
+        <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+        <meta name='description' content=''>
+        <meta name='author' content=''>
+    
+        <title>Timer</title>
+        <link href='data:image/x-icon;base64,AAABAAEAEBAQAAAAAAAoAQAAFgAAACgAAAAQAAAAIAAAAAEABAAAAAAAgAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAioqKAFXm3gBj4NoARvrxAHNzcwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARAAAAAAAABVEQAAAAAAABFVAAAAAAAAVREAAAAAAAARVQAAAAAAADRDAAAAAAAANEMAAAAAAANERDAAAAAAA0REMAAAAAADREQwAAAAADREREMAAAAANEREQwAAAAA0IkRDAAAAADQiREMAAAAAA0REMAAAAAAAMzMAAAD+fwAA/D8AAPw/AAD8PwAA/D8AAPw/AAD8PwAA+B8AAPgfAAD4HwAA8A8AAPAPAADwDwAA8A8AAPgfAAD8PwAA' rel='icon' type='image/x-icon'/>
+        <link href='https://netdna.bootstrapcdn.com/bootstrap/3.0.2/css/bootstrap.min.css' rel='stylesheet'>
+    
+      </head>
+      <body>
+
+        <nav id='top' class='navbar navbar-static-top navbar-inverse' role='navigation'>
+          <div class='container'>
+            <div class='navbar-header'>
+              <button type='button' class='navbar-toggle' data-toggle='collapse' data-target='.navbar-ex1-collapse'>
+                <span class='sr-only'>Toggle navigation</span>
+                <span class='icon-bar'></span>
+                <span class='icon-bar'></span>
+                <span class='icon-bar'></span>
+              </button>
+              <a class='navbar-brand'>Light Timer</a>
+            </div>
+    
+            <!-- Collect the nav links, forms, and other content for toggling -->
+            <div class='collapse navbar-collapse navbar-ex1-collapse'>
+              <ul class='nav navbar-nav'>
+              </ul>
+            </div><!-- /.navbar-collapse -->
+          </div><!-- /.container -->
+        </nav>
+        
+        <div class='container'>
+          <div class='row' style='margin-top: 20px'>
+            <div class='col-md-offset-2 col-md-8 well'>
+                <div id='disconnected' class='alert alert-warning' style='display:none'>
+                    <button type='button' class='close' data-dismiss='alert' aria-hidden='true'>&times;</button>
+                    <strong>Device Not Connected.</strong> Check your sprinkler's internet connection .
+                </div>
+                <div id='schedulesetok' class='alert alert-success' style='display:none'>
+                    <button type='button' class='close' data-dismiss='alert' aria-hidden='true'>&times;</button>
+                    <strong>New Schedule Set.</strong>
+                </div>
+                <div id='scheduleseterr' class='alert alert-error' style='display:none'>
+                    <button type='button' class='close' data-dismiss='alert' aria-hidden='true'>&times;</button>
+                    <strong>New Schedule Not Set.</strong> Something has gone wrong.
+                </div>
+                <div class='row'>
+                  <div class='col-md-12 form-group'>
+                    <h2 style='display: inline'>Light Schedule</h2>
+                    <button type='button' class='btn btn-default' style='vertical-align: top; margin-left: 15px;' onclick='newEntry()'><span class='glyphicon glyphicon-plus'></span> New</button>
+                    <button type='button' id='lightoff' class='btn btn-default' style='vertical-align: top; margin-left: 15px; display: inline;' onclick='lightoff()'><span class='glyphicon glyphicon-off'></span> On</button>
+                    <button type='button' id='lighton' class='btn btn-default' style='vertical-align: top; margin-left: 15px; display: none;' onclick='lighton()'><span class='glyphicon glyphicon-off'></span> Off</button>
+                  </div>
+                  <div id='entries'>
+                  </div>
+                </div>
+                <div class='row'>
+                  <div class='col-md-4'>
+                    <button type='button' class='btn btn-primary' style='margin-top: 36px;' onclick='save()'>Save</button>
+                  </div>
+                </div>
+            </div>
+          </div>
+          <hr>
+    
+          <footer>
+            <div class='row'>
+              <div class='col-lg-12'>
+                <p class='text-center'>Copyright &copy; Electric Imp 2013 &middot; <a href='http://facebook.com/electricimp'>Facebook</a> &middot; <a href='http://twitter.com/electricimp'>Twitter</a></p>
+              </div>
+            </div>
+          </footer>
+          
+        </div><!-- /.container -->
+    
+      <!-- javascript -->
+      <script src='https://cdnjs.cloudflare.com/ajax/libs/jquery/2.0.3/jquery.min.js'></script>
+      <script src='https://netdna.bootstrapcdn.com/bootstrap/3.0.2/js/bootstrap.min.js'></script>
+      <script>
+      
+        function showSchedule(rawdata) {
+            console.log('got schedule from agent: '+rawdata);
+            var schedule = JSON.parse(rawdata);
+            if (schedule.length > 0) {
+                for (var i = 0; i < schedule.length; i++) {
+                    newEntry();
+                    $('.light-start').last()[0].value = schedule[i].onat;
+                    $('.light-stop').last()[0].value = schedule[i].offat;
+                    $('.light-color').last()[0].value = schedule[i].color;
+                }
+            } else {
+                //console.log('Empty Schedule Received from Agent: '+rawdata);
+            }
+        }
+        
+        function showLightState(state) {
+            if (state == '0') {
+                $('#lightoff').css('display', 'none');
+                $('#lighton').css('display', 'inline');
+            } else {
+                $('#lighton').css('display', 'none');
+                $('#lightoff').css('display', 'inline');
+            }
+        }
+        
+        function showConnStatus(status) {
+            if (status == true) {
+                $('#disconnected').css('display', 'block');
+            } else {
+                $('#disconnected').css('display', 'none');
+            }
+        }
+      
+        function getSchedule() {
+            $.ajax({
+                url: document.URL+'/getSchedule',
+                type: 'GET',
+                success: showSchedule
+            });    
+        }
+        
+        function getLightState() {
+            $.ajax({
+                url: document.URL+'/state',
+                type: 'GET',
+                success: showLightState
+            });
+         }
+         
+        function getConnectionStatus() {
+            $.ajax({
+                url: document.URL+'/status',
+                type: 'GET',
+                success: showConnStatus
+            });
+        }
+        
+        var entryHtml = " + "\""+@"<div class='well row' style='width: 80%; margin-left: 20px;'>\
+                                <div class='col-md-4'>\
+                                    <p style='margin-top: 10px'><strong>On at: </strong></p>\
+                                    <p style='margin-top: 20px'><strong>Off at: </strong></p>\
+                                    <p style='margin-top: 20px'><strong>Color: </strong></p>\
+                                </div>\
+                                <div class='col-md-8 light-control'>\
+                                    <div class='light-time'>\
+                                        <p><input data-format='hh:mm' type='time' value='12:00' class='form-control light-start'></input></p>\
+                                    </div>\
+                                    <div class='light-time'>\
+                                        <p><input data-format='hh:mm' type='time' value='12:00' class='form-control light-stop'></input></p>\
+                                    </div>\
+                                    <div>\
+                                        <p><input type='color' value='#ffff00' class='form-control light-color'></input></p>\
+                                    </div>\
+                                </div>\
+                                <div class='col-md-1 col-md-offset-10'>\
+                                    <button type='button' class='btn btn-danger' style='margin-top: 10px;' onclick='$(this).parent().parent().remove();'>Remove</button>\
+                                </div>\
+                                </div>" + "\";" + @"
+                                
+        function newEntry() {
+            $('#entries').append(entryHtml);
+        }
+        
+        function lightoff() {
+            $('#lightoff').css('display', 'none');
+            $('#lighton').css('display', 'inline');
+            var sendTo = document.URL+'/lightoff';
+            $.ajax({
+                url: sendTo,
+                type: 'GET'
+            });
+        }
+        
+        function lighton() {
+            $('#lighton').css('display', 'none');
+            $('#lightoff').css('display', 'inline');
+            var sendTo = document.URL+'/lighton';        
+            $.ajax({
+                url: sendTo,
+                type: 'GET'
+            });
+        }
+        
+        function logSuccess() {
+            $('#schedulesetok').css('display', 'block');
+            window.setTimeout(function() { $('#schedulesetok').css('display','none'); }, 3000);
+        }
+        
+        function logError(xhr, status, error) {
+            console.log('error setting schedule: '+xhr.responseText+' : '+error);
+            $('#scheduleseterr').css('display', 'block');
+            window.setTimeout(function() { $('#scheduleseterr').css('display','none'); }, 3000);
+        }
+        
+        function save() {
+            var sendTo = document.URL+'/setSchedule'
+            
+            var waterings = $('.light-control');
+            var schedule = [];
+            
+            waterings.each(function() {
+                schedule.push({
+                    'onat': $(this).find('.light-start')[0].value,
+                    'offat': $(this).find('.light-stop')[0].value,
+                    'color': $(this).find('.light-color')[0].value
+                });
+            });
+            
+            $.ajax({
+                url: sendTo,
+                type: 'POST',
+                data: JSON.stringify(schedule),
+                success: logSuccess,
+                error: logError
+            });
+      }
+      
+      getSchedule();
+      getLightState();
+      
+      setInterval(getLightState, 1000);
+      setInterval(getConnectionStatus, 60000);
+    
+      </script>
+      </body>
+    
+    </html>"
 }
 
-function secondsTill(targetTime) {
-    local data = split(targetTime,":");
+// -----------------------------------------------------------------------------
+const WUNDERGROUND_URL = "http://api.wunderground.com/api";
+function get_lat_lon(location, callback = null) {
+    local url = format("%s/%s/geolookup/q/%s.json", WUNDERGROUND_URL, WUNDERGROUND_KEY, location);
+    http.get(url, {}).sendasync(function(res) {
+        if (res.statuscode != 200) {
+            server.log("Wunderground error: " + res.statuscode + " => " + res.body);
+            if (callback) callback(null, null);
+        } else {
+            try {
+                local json = http.jsondecode(res.body);
+                local lat = json.location.lat.tofloat();
+                local lon = json.location.lon.tofloat();
+
+                if (callback) callback(lat, lon);
+            } catch (e) {
+                server.error("Wunderground error: " + e)
+                if (callback) callback(null, null);
+            }
+            
+        }
+    });
+}
+
+// -----------------------------------------------------------------------------
+const GOOGLE_MAPS_URL = "https://maps.googleapis.com/maps/api";
+function get_gmtoffset(lat, lon, callback = null) {
+    local url = format("%s/timezone/json?sensor=false&location=%f,%f&timestamp=%d", GOOGLE_MAPS_URL, lat, lon, time());
+    http.get(url, {}).sendasync(function(res) {
+        if (res.statuscode != 200) {
+            server.log("Google maps error: " + res.statuscode + " => " + res.body);
+            if (callback) callback(null);
+        } else {
+            try {
+                local json = http.jsondecode(res.body);
+                local dst = json.dstOffset.tofloat();
+                local raw = json.rawOffset.tofloat();
+                local gmtoffset = ((raw+dst)/60.0/60.0);
+                
+                if (callback) callback(gmtoffset);
+            } catch (e) {
+                server.error("Google maps error: " + e);
+                if (callback) callback(null);
+            }
+            
+        }
+    });
+}
+
+function hexdec(c) {
+    if (c <= '9') {
+        return c - '0';
+    } else {
+        return 0x0A + c - 'A';
+    }
+}
+
+function decodeColorString(colorString) {
+    local rStr = colorString.slice(1,3);
+    local gStr = colorString.slice(3,5);
+    local bStr = colorString.slice(5,7);
+    
+    local red = (hexdec(rStr[0]) * 16) + hexdec(rStr[1]);
+    local green = (hexdec(gStr[0]) * 16) + hexdec(gStr[1]);
+    local blue = (hexdec(bStr[0]) * 16) + hexdec(bStr[1]);
+
+    local rgbTuple = {r=red,g=green,b=blue};
+    return rgbTuple;
+}
+
+function secondsTil(targetStr) {
+    local data = split(targetStr,":");
     local target = { hour = data[0].tointeger(), min = data[1].tointeger() };
-    local now = date(time() - (3600 * 8));
+    target.hour -= saveData.gmtoffset;
+    if (target.hour > 23) {
+        target.hour -= 24;
+    }
+
+    local now = date(time(),'u');
     
     if ((target.hour < now.hour) || (target.hour == now.hour && target.min < now.min)) {
         target.hour += 24;
     }
     
-    local secondsTill = 0;
-    secondsTill += (target.hour - now.hour) * 3600;
-    secondsTill += (target.min - now.min) * 60;
-    return secondsTill;
+    local result = 0;
+    result += (target.hour - now.hour) * 3600;
+    result += (target.min - now.min) * 60;
+    return result;
 }
 
-function lightsOnSched() {
-    server.log("Executing Scheduled Lights-On.");
-    device.send("switch",{channel="all",state=1});
-}
-
-function lightsOffSched() {
-    server.log("Executing Scheduled Lights-Off.");
-    device.send("switch",{channel="all",state=0});
-}
-
-function refreshSched() {
-    
-    foreach (lighting in SCHED.lights) {
-       // schedule wake-and-lights-on
-        imp.wakeup(secondsTill(lighting.onat), lightsOnSched);
-        // schedule wake-and-lights-off
-        imp.wakeup(secondsTill(lighting.onat)+(lighting.onfor.tointeger() * 60), lightsOffSched); 
-    }
-}
-
-function setNewSched(sched) {
-    if ("lights" in sched) {
-        SCHED.lights = sched.lights;
+function runSched() {
+    if (!saveData.schedule) { 
+        server.error("No Schedule.");
+        return;
     }
     
-    foreach (lighting in SCHED.lights) {
+    while (scheduledEvents.len() > 0) {
+        imp.cancelwakeup(scheduledEvents.pop());
+        device.send("setColor",{r=0,g=0,b=0});
+        lightstate = 0;
+    }
+    
+    foreach (lighting in saveData.schedule) {
+        
+        local myColor = lighting.color;
+        
         // schedule wake-and-lights-on
-        server.log("lights-on in "+secondsTill(lighting.onat));
-        imp.wakeup(secondsTill(lighting.onat), lightsOnSched);
-        // schedule wake-and-lights-off
-        server.log("lights-off in "+(secondsTill(lighting.onat)+(lighting.onfor.tointeger() * 60)));
-        imp.wakeup(secondsTill(lighting.onat)+(lighting.onfor.tointeger() * 60), lightsOffSched); 
-    }
+        local handle = imp.wakeup(secondsTil(lighting.onat), function() {
+            device.send("setColor",decodeColorString(myColor));
+            lightstate = 1;
+        }.bindenv(this)); 
+        scheduledEvents.push(handle);
     
-    imp.wakeup(secondsTill("00:00"), refreshSched);
-}
-
-// -----------------------------------------------------------------------------
-// Firebase class: Implements the Firebase REST API.
-// https://www.firebase.com/docs/rest-api.html
-//
-// Author: Aron
-// Created: September, 2013
-//
-class Firebase {
-    
-    database = null;
-    authkey = null;
-    agentid = null;
-    url = null;
-    headers = null;
-    
-    // ........................................................................
-    constructor(_database, _authkey, _path = null) {
-        database = _database;
-        authkey = _authkey;
-        agentid = http.agenturl().slice(-12);
-        headers = {"Content-Type": "application/json"};
-        set_path(_path);
-    }
-    
-    
-    // ........................................................................
-    function set_path(_path) {
-        if (!_path) {
-            _path = "agents/" + agentid;
+        handle = imp.wakeup(secondsTil(lighting.offat), function() {
+            device.send("setColor",{r=0,g=0,b=0});
+            lightstate = 0;
+        }.bindenv(this));
+        scheduledEvents.push(handle);
+        
+        if (secondsTil(lighting.offat) < secondsTil(lighting.onat)) {
+            device.send("setColor",decodeColorString(myColor));
+            lightstate = 1;
         }
-        url = "https://" + database + ".firebaseIO.com/" + _path + ".json?auth=" + authkey;
-    }
-
-
-    // ........................................................................
-    function write(data, callback = null) {
-    
-        //if (typeof data == "table") data.heartbeat <- time();
-        http.request("PUT", url, headers, http.jsonencode(data)).sendasync(function(res) {
-            if (res.statuscode != 200) {
-                if (callback) callback(res);
-                else server.log("Write: Firebase response: " + res.statuscode + " => " + res.body)
-            } else {
-                if (callback) callback(null);
-            }
-        }.bindenv(this));
-    
     }
     
-    // ........................................................................
-    function update(data, callback = null) {
-    
-        //if (typeof data == "table") data.heartbeat <- time();
-        http.request("PATCH", url, headers, http.jsonencode(data)).sendasync(function(res) {
-            if (res.statuscode != 200) {
-                if (callback) callback(res);
-                else server.log("Update: Firebase response: " + res.statuscode + " => " + res.body)
-            } else {
-                if (callback) callback(null);
-            }
-        }.bindenv(this));
-    
-    }
-    
-    // ........................................................................
-    function push(data, callback = null) {
-    
-        //if (typeof data == "table") data.heartbeat <- time();
-        http.post(url, headers, http.jsonencode(data)).sendasync(function(res) {
-            if (res.statuscode != 200) {
-                if (callback) callback(res, null);
-                else server.log("Push: Firebase response: " + res.statuscode + " => " + res.body)
-            } else {
-                local body = null;
-                try {
-                    body = http.jsondecode(res.body);
-                } catch (err) {
-                    if (callback) return callback(err, null);
-                }
-                if (callback) callback(null, body);
-            }
-        }.bindenv(this));
-    
-    }
-    
-    // ........................................................................
-    function read(callback = null) {
-        http.get(url, headers).sendasync(function(res) {
-            if (res.statuscode != 200) {
-                if (callback) callback(res, null);
-                else server.log("Read: Firebase response: " + res.statuscode + " => " + res.body)
-            } else {
-                local body = null;
-                try {
-                    body = http.jsondecode(res.body);
-                } catch (err) {
-                    if (callback) return callback(err, null);
-                }
-                if (callback) callback(null, body);
-            }
-        }.bindenv(this));
-    }
-    
-    // ........................................................................
-    function remove(callback = null) {
-        http.httpdelete(url, headers).sendasync(function(res) {
-            if (res.statuscode != 200) {
-                if (callback) callback(res);
-                else server.log("Delete: Firebase response: " + res.statuscode + " => " + res.body)
-            } else {
-                if (callback) callback(null, res.body);
-            }
-        }.bindenv(this));
-    }
-    
+    local refreshHandle = imp.wakeup(secondsTil(refreshtime)+60, function() { runSched(); });
+    scheduledEvents.push(refreshHandle);
 }
-
-/* DEVICE CALLBACK HANDLERS --------------------------------------------------*/
-
-/* During initialization, the device sends its MAC address to be hashed and returned as
- * a unique 24-bit controllerID for the comen sub-device protocol.
- */
-device.on("controllerIDfromMAC", function(mac) {
-    
-    local rawhash = http.hash.md5(mac);
-    server.log("imp MAC address: 0x"+mac);
-    server.log("hashed MAC address: "+BlobToHexString(rawhash));
-    
-    for (local i = 2; i >= 0; i--) {
-        controllerID += (rawhash[i] << (16 - (8 * i)));
-    }
-    
-    server.log(format("Generated Controller ID: 0x%03x",controllerID));
-    
-    device.send("setControllerId",controllerID);
-});
 
 /* HTTP REQUEST HANDLER ------------------------------------------------------*/
 
@@ -369,22 +390,70 @@ http.onrequest(function(req,res) {
     res.header("Access-Control-Allow-Origin", "*");
     res.header("Access-Control-Allow-Headers","Origin, X-Requested-With, Content-Type, Accept");
 
-    if (req.path == "/schedule" || req.path == "/schedule/") {
+    if (req.path == "/setSchedule" || req.path == "/setSchedule/") {
         server.log("Setting new schedule");
-        server.log(req.body);
-        local newSched = http.jsondecode(req.body);
-        setNewSched(newSched);
-        res.send(200,SCHED);
-    } else if (req.path == "/on" || req.path == "/on/") {
-        res.send(200, "Lights On!");
-        "switch",{channel="all",state=1}
-    } else if (req.path == "/off" || req.path == "/off/") {
-        res.send(200, "Lights Off!");
-        "switch",{channel="all",state=0}
+        try {
+            saveData.schedule = http.jsondecode(req.body);
+            // respond to web UI 
+            res.send(200, "Schedule Set");
+            server.log("New Schedule Set: "+req.body);
+            // store schedule in case of agent reset
+            server.save(saveData);
+            runSched();
+        } catch (err) {
+            server.log(err);
+            res.send(400, "Invalid Schedule: "+err);
+        }
+    } else if (req.path == "/getSchedule" || req.path == "/getSchedule/") {
+        server.log("Serving Current Schedule.");
+        res.send(200,http.jsonencode(saveData.schedule));
+    } else if (req.path == "/state" || req.path == "/state/") {
+        res.send(200, lightstate);
+    } else if (req.path == "/status" || req.path == "/status/") {
+        res.send(200, device.isconnected());
+    } else if (req.path == "/lighton" || req.path == "/lighton/") {
+        res.send(200, "OK");
+        lightstate = 1;
+        device.send("setColor",{r=256,g=256,b=0});
+    } else if (req.path == "/lightoff" || req.path == "/lightoff/") {
+        res.send(200, "OK");
+        lightstate = 0;
+        device.send("setColor",{r=0,g=0,b=0});
     } else {
-        res.send(200, webpage);
+        server.log("Serving Web UI");
+        res.send(200, WEBPAGE);
     }
     
 });
 
 /* RUNTIME BEGINS HERE -------------------------------------------------------*/
+
+server.log("Light Timer Color Agent Running");
+
+prepWebpage();
+
+if (!("schedule" in saveData)) {
+    server.log("No schedule loaded.");
+    saveData.schedule <- [];
+} else {
+    server.log("Loaded Schedule: "+http.jsonencode(saveData.schedule));
+}
+
+if (!("gmtoffset" in saveData)) {
+    get_lat_lon(location, function(lat, lon) {
+        server.log("Finding GMT Offset from Location; Lat = "+lat+", Lon = "+lon);
+        get_gmtoffset(lat, lon, function(offset) {
+            server.log("GMT Offset = "+offset+" hours.");
+            saveData.gmtoffset <- offset;
+            server.save(saveData);
+        });
+    });
+} else {
+    server.log("Loaded GMT Offset: "+saveData.gmtoffset+" hours.");
+}
+
+// Now we're up and running, so let the device request a refresh if it restarts
+device.on("juststarted", function(val) {
+    runSched();
+});
+

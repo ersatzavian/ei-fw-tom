@@ -43,10 +43,7 @@ WEBPAGE <- @"Agent initializing, please refresh.";
 
 /* GLOBAL FUNCTIONS AND CLASS DEFINITIONS ====================================*/
 
-/* Pack up the UI webpage. The page needs the xively parameters as well as the device ID,
- * So we need to wait to get the device ID from the device before packing the webpage 
- * (this is done by concatenating some global vars with some multi-line verbatim strings).
- * Very helpful that this block can be compressed, as well. */
+/* Pack up the UI webpage. */
 function prepWebpage() {
     WEBPAGE = @"
     <!DOCTYPE html>
