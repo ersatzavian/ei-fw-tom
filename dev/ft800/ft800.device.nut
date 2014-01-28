@@ -792,7 +792,7 @@ class ft800 {
         cp_stream();
         cp_send_cmd(bitmaphandle(handle));
         cp_send_cmd(CMD_LOADIMAGE);
-        cp_send_cmd(0);
+        cp_send_cmd(dest_offset);
         cp_send_cmd(options);
         /*copy JPEG data straight into the CMD buffer in chunks (4096 bytes of CMD memory)*/
         local BLOCKSIZE = 2048;
@@ -830,7 +830,6 @@ class ft800 {
         cp_send_cmd(begin(BITMAPS));
         cp_send_cmd(vertex2ii(offset_x,offset_y,handle,0));
         cp_swap();
-        server.log("Done drawing.");
     }
 
     function cp_text(string) {
@@ -849,9 +848,8 @@ function disp_int_handler() {
 /* AGENT CALLBACKS -----------------------------------------------------------*/
 
 agent.on("text", function(str) {
-    server.log("Got text: "+str);
-    display.demo_text(str);
-    display.check_pointers();
+    display.cp_text(str);
+    display.cp_swap();
 });
 
 agent.on("clear", function(req) {
