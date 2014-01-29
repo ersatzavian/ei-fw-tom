@@ -275,7 +275,6 @@ const FT_DispPCLKPol       = 1;
 */
 
 class ft800 {
-    dl_ptr          = 0;
     cp_ptr          = 0;
     freespace       = 0;
     debug           = 0;
@@ -290,89 +289,62 @@ class ft800 {
         this.cs_l   = _cs_l;
         this.pd_l   = _pd_l;
         this.int    = _int;
-        
-        dl_ptr      = 0;
+
         cp_ptr      = 0;
         freespace   = FIFO_SIZE;
     }
     
-    /* Specify default color for the screen when the color buffer is cleared
-     * red: integer value, 0-255
-     * green: integer value, 0-255
-     * blue: integer value, 0-255
-     */
     function clear_color_rgb(red,green,blue) {
         return (2<<24)|(((red)&255)<<16)|(((green)&255)<<8)|(((blue)&255)<<0);
     }
-
     function color_rgb(red,green,blue) {
         return (4<<24)|(((red)&255)<<16)|(((green)&255)<<8)|(((blue)&255)<<0);
     }
-
     function color_a(alpha) {
         return (16<<24)|(((alpha)&255)<<0);
     }
-
-    /* Clear Command with three parameters
-     * C: Clear color buffer    (bool)
-     * S: Clear stencil buffer  (bool)
-     * T: Clear tag buffer      (bool)
-     */
     function clear_cst(c, s, t) {
         return (38<<24)|(((c)&1)<<2)|(((s)&1)<<1)|(((t)&1)<<0);
     }
-
     function line_width(width) {
         return (14<<24)|(((width)&4095)<<0);
     }
-
     function begin(prim) {
         return (31<<24)|((prim & 15)<<0);
     }
-    
     function bitmaphandle(handle) {
         return (5<<24)|((handle & 15)<<0);
     }
-
     function vertex2f(x, y) {
         return (1<<30)|(((x)&32767)<<15)|(((y)&32767)<<0);
     }
-    
     function vertex2ii(x, y, handle=0, cell=0) {
         return (2<<30)|(((x)&511)<<21)|(((y)&511)<<12)|(((handle)&31)<<7)|(((cell)&127)<<0);
     }
-    
     function point_size(size) {
         return (13<<24)|(((size)&8191)<<0);
     }
-    
     function scissor_xy(x, y) {
         return ((27<<24)|(((x)&511)<<9) | (((y)&511)<<0));
     }
-
     function scissor_size(width, height) {
         return ((28<<24)|(((width)&1023)<<10)|(((height)&1023)<<0));
     }
-    
     function bitmap_source(addr) {
         return (1<<24)|(((addr)&1048575)<<0);
     }
     function bitmap_layout(format, linestride, height) {
         return (7<<24)|(((format)&31)<<19)|(((linestride)&1023)<<9)|(((height)&511)<<0);
     }
-    
     function bitmap_size(filter, wrapx, wrapy, width, height) {
         return (8<<24)|(((filter)&1)<<20)|(((wrapx)&1)<<19)|(((wrapy)&1)<<18)|(((width)&511)<<9)|(((height)&511)<<0);
     }
-    
     function bitmap_transform_a(a) {
         return (21<<24)|(((a)&131071)<<0);
     }
-    
     function bitmap_transform_e(e) {
         return (25<<24)|(((e)&131071)<<0);
     }
-
     function blend_func(src, dst) {
         return (11<<24)|(((src)&7)<<3)|(((dst)&7)<<0);
     }
@@ -444,10 +416,11 @@ class ft800 {
         
         /* Touch configuration - configure the resistance value to 1200 - this value is specific to customer requirement and derived by experiment */
         gpu_write_mem16(REG_TOUCH_RZTHRESH, 1200);
-        //server.log("wrote config");
+
+        // Start a new set of Display List commands with the coprocessor
+        cp_start();
     }
 
-    /* TODO: determine if this function needs to actually perform stringification and remove if not */
     function gpu_write_mem(addr, byte_array) {
         gpu_write_start(addr);
         foreach (i, byte in byte_array) {
@@ -465,6 +438,7 @@ class ft800 {
     function gpu_write_start(addr) {
         local startStr = format("%c%c%c",(0x80 | (addr >> 16)),
             ((addr >> 8) & 0xff),(addr & 0xff));
+        this.cs_l.write(1);
         this.cs_l.write(0);
         this.spi.write(startStr);
     }
@@ -488,6 +462,11 @@ class ft800 {
         gpu_write_start(addr);
         this.spi.write(writeStr);
         this.cs_l.write(1);
+    }
+    
+    function gpu_wr32(int) {
+        this.spi.write(format("%c%c%c%c",(int & 0xff),((int >> 8) & 0xff),
+            ((int >> 16) & 0xff),((int >> 24) & 0xff)));
     }
 
     function gpu_read_mem(addr, len) {
@@ -515,50 +494,6 @@ class ft800 {
         }
     }
     
-    /* Load a bitmap into general memory. Does not use the coprocessor. 
-     * This command requires some information be parsed from the bitmap header. 
-     * Input:
-     *      bitmap_header: a table with parameters from the bitmap header:
-     *          format: FT800 BMP Format code (e.g. ARGB1555)
-     *          stride: linestride (4 * ((bmpheader.width * (bmpheader.bitsperpx / 8) + 3) / 4);)
-     *          width: bitmap width
-     *          height: bitmap height
-     *          bitsperpx: bits per pixel (color depth)
-     *      bitmap_data: the pixel field of the bitmap file, as a blob
-     *      bitmap handle: bitmap handle to associate with this data (0-15)
-     */
-    function gpu_load_bmp(bitmap_header, bitmap_data, offset_x, offset_y) {
-        // dump the bitmap data in graphics memory
-        gpu_write_blob(RAM_G, bitmap_data);
-
-        // start writing a display list
-        dl_ptr = RAM_DL;
-        gpu_write_start(RAM_DL);
-        
-        gpu_write_mem32(clear_color_rgb(0,0,0));  // Black the screen out
-        dl_ptr += 4;
-        gpu_write_mem32(clear_cst(1, 1, 1)); // clear the selected area
-        dl_ptr += 4;
-        gpu_write_me32(color_rgb(255,255,255));
-        dl_ptr += 4;
-        
-        gpu_write_mem32(bitmap_source(RAM_G)); // specify the bmp source location
-        dl_ptr += 4;
-        gpu_write_mem32(bitmap_layout(bitmap_header.format, bitmap_header.stride, bitmap_header.height));
-        dl_ptr += 4;
-        //gpu_write_ram32(bitmap_layout(ARGB1555, bitmap_header.stride, bitmap_header.height));
-        gpu_write_mem32(bitmap_size(NEAREST, BORDER, BORDER, bitmap_header.width, bitmap_header.height));
-        dl_ptr += 4;
-        gpu_write_mem32(begin(BITMAPS)); // start drawing bitmap objects
-        dl_ptr += 4;
-        gpu_write_mem32(vertex2ii(offset_x, offset_y, 0, RAM_G)); // place this object
-        dl_ptr += 4;
-        gpu_write_mem32(0); // end of display list
-        dl_ptr += 4;
-    
-        gpu_dlswap(DLSWAP_FRAME); // swap to this display list on next draw
-    }
-    
     function set_rotation(val) {
         this.cs_l.write(1);
         if (val) {
@@ -569,17 +504,22 @@ class ft800 {
         this.cs_l.write(1);
     } 
 
+    /* COPROCESSOR COMMANDS --------------------------------------------------*/
+    
+    /* Start a new display list with the coprocessor. 
+     * Leaves the "stream" open after sending the display list start command
+     */
+    function cp_start() {
+        cp_stream();
+        cp_send_cmd(CMD_DLSTART);
+    }
+
     /* Initiate a SPI transaction with the address pointer set to the current 
      * position in the coprocessor command FIFO.
      */
     function cp_stream() {
         this.cs_l.write(1);
         gpu_write_start(RAM_CMD + (cp_ptr & FIFO_SIZE));
-    }
-    
-    function cp_start() {
-        cp_stream();
-        cp_send_cmd(CMD_DLSTART);
     }
 
     /* End a SPI transaction with the coprocessor by moving the FIFO write pointer.
@@ -661,6 +601,45 @@ class ft800 {
         cp_ptr += 4;
         freespace -= 4;
     }
+    
+    /* Clear the screen to a specified RGB color through the coprocessor.
+     * This command sets the default color of the screen when nothing is drawn on it,
+     * then uses CMD_SWAP to redraw the screen on the next draw.
+     * Input: 
+     *      r: red value (0-255)
+     *      g: green value (0-255)
+     *      b: blue value (0-255)
+     * Return: (None)
+     */
+    function cp_clear_to(r,g,b) {
+        // Start a transaction with the coprocessor
+        cp_stream();
+        cp_send_cmd(clear_color_rgb(r,g,b));
+        // clear the color, stencil, and tag buffers
+        cp_send_cmd(clear_cst(1, 1, 1));
+        cp_swap();
+    }
+    
+    /* Set the color used to draw primitives such as fonts and shapes
+     * Input:
+     *      r, g, b: integer 0-255
+     * Return: (None)
+     */
+    function cp_set_color(r,g,b) {
+        cp_stream();
+        cp_send_cmd(color_rgb(r,g,b));
+    }
+    
+    /* Clear the color, stencil, and tag buffers
+     * Input
+     *      c: clear color buffer (bool)
+     *      s: clear stencil buffer (bool)
+     *      t: clear tag buffer (bool)
+     */
+    function cp_clear_cst(c,s,t) {
+        cp_stream();
+        cp_send_cmd(clear_cst(c,s,t));
+    }
 
     /* Write a blob into the coprocessor command FIFO. 
      * This command assumes a SPI transaction has already been initiated with 
@@ -672,6 +651,14 @@ class ft800 {
      * command buffer, if necessary. 
      */
     function cp_send_blob(myblob) {
+        // pad blob to make sure length is a multiple of 4 (FT800 requirement)
+        local length = myblob.len()
+        myblob.seek(0, 'e');
+        for (local i = 0; i < (4 - (length % 4)); i++) {
+            myblob.writen(0x00,'b');
+        }
+        myblob.seek(0,'b');
+        
         //server.log(freespace+" bytes free in FIFO");
         if (freespace < myblob.len()) {
             cp_getfree(myblob.len());
@@ -732,24 +719,6 @@ class ft800 {
         cp_send_cmd(((options << 16) | font));
         cp_send_string(string + "\0");
     }
-    
-    /* Clear the screen to a specified RGB color through the coprocessor.
-     * This command sets the default color of the screen when nothing is drawn on it,
-     * then uses CMD_SWAP to redraw the screen on the next draw.
-     * Input: 
-     *      r: red value (0-255)
-     *      g: green value (0-255)
-     *      b: blue value (0-255)
-     * Return: (None)
-     */
-    function cp_clear_to(r,g,b) {
-        // Start a transaction with the coprocessor
-        cp_stream();
-        cp_send_cmd(clear_color_rgb(r,g,b));
-        // clear the color, stencil, and tag buffers
-        cp_send_cmd(clear_cst(1, 1, 1));
-        cp_swap();
-    }
 
     /* Set the bitmap handle
      * This allows us to perform graphics operations on this handle, treating it as a sprite
@@ -762,6 +731,38 @@ class ft800 {
         cp_stream();
         cp_send_cmd(bitmaphandle(handle));
         // Don't flush the command buffer; leave the display list open so we can finish writing it.
+        this.cs_l.write(1);
+    }
+    
+    /* Load a bitmap into general memory, then set display list context through the coprocessor.
+     * This command requires some information be parsed from the bitmap header. 
+     * Input:
+     *      bitmap_header: a table with parameters from the bitmap header:
+     *          format: FT800 BMP Format code (e.g. ARGB1555)
+     *          stride: linestride (4 * ((bmpheader.width * (bmpheader.bitsperpx / 8) + 3) / 4);)
+     *          width: bitmap width
+     *          height: bitmap height
+     *          bitsperpx: bits per pixel (color depth)
+     *      bitmap_data: the pixel field of the bitmap file, as a blob
+     *      bitmap handle: bitmap handle to associate with this data (0-15)
+     */
+    function cp_load_bmp(bitmap_header, bitmap_data, handle, dest_offset) {
+        // dump the bitmap data in graphics memory
+        gpu_write_blob(dest_offset, bitmap_data);
+        
+        server.log("Done writing data to FT800 RAM.");
+
+        // end this transaction and restart "stream" with coprocessor
+        this.cs_l.write(1);
+        cp_start();
+        
+        cp_send_cmd(begin(BITMAPS));
+        cp_send_cmd(bitmaphandle(handle));
+        cp_send_cmd(bitmap_source(dest_offset)); // specify the bmp source location
+        cp_send_cmd(bitmap_layout(bitmap_header.format, bitmap_header.stride, bitmap_header.height));
+        //gpu_write_ram32(bitmap_layout(ARGB1555, bitmap_header.stride, bitmap_header.height));
+        cp_send_cmd(bitmap_size(NEAREST, BORDER, BORDER, bitmap_header.width, bitmap_header.height));
+    
         this.cs_l.write(1);
     }
 
@@ -778,6 +779,7 @@ class ft800 {
      *      dest_offset: memory offset to unpack the image into.
      *          Set dest_offset to "-1" to tell the coprocessor to unload the image data 
      *          directly after the last image in RAM
+     *      handle: bitmap handle to assign the resulting bitmap to.
      *      options: any of the following:
      *          OPT_RGB565: (default) loaded bitmap will be in RGB565 format
      *          OPT_MONO:   loaded bitmap will be in monochrome L8 format
@@ -785,8 +787,8 @@ class ft800 {
      *                      either of the above commands.
      * Return: (None)
      */
-    function cp_load_jpg(jpg_data, dest_offset, handle, options = 0, posx = 0, posy = 0) {
-        server.log(format("Unpacking %d bytes of JPEG data into 0x%02x with handle %d, at (%d,%d)",jpg_data.len(),dest_offset, handle, posx, posy));
+    function cp_load_jpg(jpg_data, dest_offset, handle, options = 0) {
+        server.log(format("Unpacking %d bytes of JPEG data into 0x%02x with handle %d",jpg_data.len(),dest_offset,handle));
         
         // begin writing into the CMD buffer
         cp_stream();
@@ -800,23 +802,56 @@ class ft800 {
             // cp_send_blob automatically makes sure we have free space for the block
             cp_send_blob(jpg_data.readblob(BLOCKSIZE));
         }
+    }
+    
+    /* Decompress ZLIB-compressed data into RAM via the coprocessor and associate it with a bitmap handle.
+     * The ZLIB data is written straight into the command buffer as the coprocessor processes it.
+     * The image can then be drawn to the screen by writing the associated bitmap handle into
+     * a display list. 
+     *
+     * This command is the preferred method for pre-loading graphics into the FT800 
+     * for a given application because:
+     *  - ZLIB provides lossless compression
+     *  - graphics can be loaded with transparency (JPEG provides only RGB565 and L8 formats)
+     *  - the operation is handled through the coprocessor, which simplifies RAM management
+     * 
+     * The requester must provide some information about the files stored in the ZLIB blob,
+     * because the blob cannot be parsed directly.
+     *
+     * Input: 
+     *      zlib_data: a binary blob of JPEG data, including the JPEG header.
+     *      dest_offset: memory offset to unpack the image into.
+     *          Set dest_offset to "-1" to tell the coprocessor to unload the image data 
+     *          directly after the last image in RAM
+     *      handle: bitmap handle to assign the resulting bitmap to.
+     *      format: graphics format to use for the resulting BMP data (e.g. ARGB1555)
+     *      bitsperpx: 0-32
+     *      width: width of resulting BMP in pixels
+     *      height: height of resulting BMP in pixels
+     * Return: (None)
+     */
+    function cp_load_zlib(zlib_data, dest_offset, handle, bmpformat, bitsperpx, width, height) {
+        server.log(format("Unpacking %d bytes of ZLIB data into 0x%02x with handle %d",zlib_data.len(),dest_offset,handle));
         
-        // This is a copy of cp_draw
-        //cp_stream();
-        //cp_send_cmd(CMD_DLSTART);
-        /*
-        cp_send_cmd(clear_color_rgb(255, 255, 255));
-        cp_send_cmd(clear_cst(1,1,1));
-        cp_send_cmd(begin(BITMAPS));
-        cp_send_cmd(vertex2ii(posx,posy,handle,0));
-        cp_send_cmd(CMD_SWAP);
-        // flush the coprocessor command buffer and finish the transaction
-        */
-        server.log("Done unpacking JPEG.");
+        // begin writing into the CMD buffer
+        cp_stream();
+        cp_send_cmd(bitmaphandle(handle));
+        cp_send_cmd(CMD_INFLATE);
+        cp_send_cmd(dest_offset);
+        local BLOCKSIZE = 2048;
+        for (local i = 0; i < zlib_data.len(); i += BLOCKSIZE) {
+            // cp_send_blob automatically makes sure we have free space for the block
+            cp_send_blob(zlib_data.readblob(BLOCKSIZE));
+        }
+        // specify the resulting bmp source location, layout, and size.
+        local stride = 4 * ((width * (bitsperpx / 8) + 3) / 4);
+        cp_send_cmd(bitmap_source(dest_offset)); 
+        cp_send_cmd(bitmap_layout(bmpformat, stride, height)); 
+        cp_send_cmd(bitmap_size(NEAREST, BORDER, BORDER, width, height));
     }
     
     /* Use the coprocessor to draw a specified bitmap handle at a specified offset.
-     * Requres that the source and layout of the bitmap have already been set in display list memory. 
+     * Requires that the source and layout of the bitmap have already been set in display list memory. 
      * Input:
      *      handle: bitmap handle (0 to 14)
      *      source: location of image in memory 
@@ -827,17 +862,10 @@ class ft800 {
     function cp_draw(handle,offset_x,offset_y) {
         server.log(format("Drawing Handle %d at (%d,%d)",handle,offset_x,offset_y));
         cp_stream();
+        cp_send_cmd(clear_cst(1,1,1));
         cp_send_cmd(begin(BITMAPS));
         cp_send_cmd(vertex2ii(offset_x,offset_y,handle,0));
         cp_swap();
-    }
-
-    function cp_text(string) {
-        cp_stream();
-        cp_send_cmd(clear_color_rgb(255, 255, 255));
-        cp_send_cmd(clear_cst(1, 1, 1));
-        cp_send_cmd(color_rgb(0x80, 0x80, 0x00));
-        cp_cmd_text(FT_DispWidth/2, FT_DispHeight/2, 31, OPT_CENTERX, string);
     }
 }
 
@@ -848,41 +876,36 @@ function disp_int_handler() {
 /* AGENT CALLBACKS -----------------------------------------------------------*/
 
 agent.on("text", function(str) {
-    display.cp_text(str);
+    display.cp_clear_to(255,255,255);
+    display.cp_clear_cst(1,1,1);
+    display.cp_set_color(200,200,200);
+    // X, Y, FONT, OPTIONS, STRING
+    display.cp_cmd_text(FT_DispWidth/2, FT_DispWidth/2,31,OPT_CENTER,str);
     display.cp_swap();
 });
 
-agent.on("clear", function(req) {
-    display.cp_clear_to(0,0,0);
+agent.on("loadjpg", function(req) {
+    local dest_offset = -1; // place in first free location in RAM
+    local options = 0;
+    display.cp_load_jpg(req.jpgdata,-1,req.handle,options);
 });
 
-agent.on("bmp", function(req) {
-    server.log(format("Got BMP, %d bytes. Drawing at %d, %d",req.bmpdata.len(),req.xoffset,req.yoffset));
-    display.gpu_load_bmp(req.bmpheader, req.bmpdata, req.xoffset, req.yoffset);
-});
-
-posX <- 0;
-posY <- 0;
-dest_offset <- 0;
-handle <- 0;
-options <- 0;
-
-agent.on("jpg", function(req) {
-    display.cp_load_jpg(req.jpgdata,dest_offset,handle,options,posX,posY);
-    //display.cp_draw(handle,posX,posY);
-    posX = math.rand() % 360;
-    posY = math.rand() % 152;
-    handle++;
-    if (handle > 14) {
-        handle = 0;
+agent.on("loadzlib", function(req) {
+    local dest_offset = 0; // place in first free location in RAM
+    if ("dest_offset" in req) {
+        dest_offset = req.dest_offset;
     }
-    dest_offset = -1;
+    display.cp_load_zlib(req.zlibdata, dest_offset, req.handle, req.format, req.bitsperpx, req.width, req.height);
+})
+
+agent.on("loadbmp", function(req) {
+    server.log(format("Got BMP, %d bytes.", req.bmpdata.len()));
+    // header table, pixel field blob, bitmap handle, and offset to unpack data into
+    display.cp_load_bmp(req.bmpheader, req.bmpdata, req.handle, 0);
 });
 
-agent.on("draw", function(myhandle) {
-    posX = math.rand() % 360;
-    posY = math.rand() % 152;
-    display.cp_draw(myhandle,posX,posY);
+agent.on("draw", function(req) {
+    display.cp_draw(req.handle,req.xoffset,req.yoffset);
 });
 
 /* RUNTIME BEGINS HERE -------------------------------------------------------*/
@@ -913,11 +936,18 @@ display.power_down(function() {
         display.config();
         server.log("Powered Up");
         // clear display to white
-        display.cp_clear_to(255,255,255);
+        display.cp_clear_to(0,0,0);
         // Doing development on my desk with display upside-down.
         display.set_rotation(1);
-        display.cp_start();
-        display.cp_text("Ready.");
+        // clear the color, stencil, and tag buffers
+        display.cp_clear_cst(1,1,1);
+        // set color for drawing primitives (green)
+        display.cp_set_color(0,255,0);
+        // send a text string to the coprocessor
+        // X, Y, FONT, OPTIONS, STRING
+        display.cp_cmd_text(100, 25, 18, OPT_RIGHTX, "ft800:/$ _");
+        // draw!
         display.cp_swap();
+        //display.cp_text("ft800:/$ _",18,OPT_CENTERX,0,255,0);
     });
 });

@@ -4,7 +4,7 @@ const DISPHEIGHT    = 272;
 
 // bitmap header parameters
 const BI_BITFIELDS  = 3;
-// FT800 bit mask codes
+// FT800 bitmap format codes
 const ARGB1555      = 0;
 const L1            = 1;
 const L4            = 2;
@@ -15,7 +15,7 @@ const ARGB4         = 6;
 const RGB565        = 7;
 const PALETTED      = 8;
 
-function sendBmp(bmpdata) {
+function sendBmp(bmpdata, handle) {
     local bmpheader = {};
     
     // Read the BMP Header
@@ -99,52 +99,74 @@ function sendBmp(bmpdata) {
     server.log("header format code: "+bmpheader.format);
    
     // read the pixel field into a separate blob to make things simpler device-side
-    bmpdata.seek(bmpheader.pxoffset,'b');
-    local imgdata = bmpdata.readblob(bmpheader.imgsize);
+    // The FT800 appears to be unaware that windows BMPs are drawn upside-down, so 
+    // fix that so this is right-side up.
+    local imgdata = blob(bmpheader.imgsize);
+    local endofdata = bmpheader.pxoffset+bmpheader.imgsize;
+    local bytesperrow = (bmpheader.bitsperpx * bmpheader.width)/8;
+    local position = endofdata-bytesperrow;
+    bmpdata.seek(position,'b');
+    for (local i = 0; i < bmpheader.height; i++) {
+        imgdata.writeblob(bmpdata.readblob(bytesperrow));
+        position -= bytesperrow;
+        bmpdata.seek(position,'b');
+    }
     
-    // tell the screen where to put the new image. Currently random.
-    local xoffset = math.rand() % (DISPWIDTH - bmpheader.width);
-    local yoffset = math.rand() % (DISPHEIGHT - bmpheader.height);
+    //bmpdata.seek(bmpheader.pxoffset,'b');
+    //local imgdata = bmpdata.readblob(bmpheader.imgsize);
 
     // Send the parsed header and raw file
-    device.send("bmp", {"bmpheader":bmpheader,"bmpdata":imgdata,"xoffset":xoffset,"yoffset":yoffset} );
+    device.send("loadbmp", {"bmpheader":bmpheader,"bmpdata":imgdata,"handle":handle} );
 
     server.log(format("Parsed BMP, %d x %d px", bmpheader.width, bmpheader.height));
 }
 
-function sendJpg(jpgdata) {
-    // pad jpg blob to make sure length is a multiple of 4 (FT800 requirement)
-    local length = jpgdata.len()
-    jpgdata.seek(0, 'e');
-    for (local i = 0; i < (4 - (length % 4)); i++) {
-        jpgdata.writen(0x00,'b');
-    }
-    
-    // tell the screen where to put the new image.
-//    local xoffset = math.rand() % (DISPWIDTH - 120);
-//    local yoffset = math.rand() % (DISPHEIGHT - 120);
-//    local xoffset = DISPWIDTH / 2;
-//    local yoffset = DISPHEIGHT / 2;
-    local xoffset = 0;
-    local yoffset = 0;
+function sendJpg(jpgdata, handle) {
+    device.send("loadjpg", {"jpgdata":jpgdata,"handle":handle});
+}
 
-    device.send("jpg", {"jpgdata":jpgdata,"xoffset":xoffset,"yoffset":yoffset});
+function sendZlib(zlibdata, handle, format, bitsperpx, width, height) {
+    device.send("loadzlib", {"zlibdata":zlibdata,"handle":handle,"format":format,
+        "bitsperpx":bitsperpx,"width":width,"height":height});
 }
 
 http.onrequest(function(req, resp) {
-    if (req.path == "/clear" || req.path == "/clear/") {
-        device.send("clear",0);
-    } else if (req.path == "/bmp" || req.path == "/bmp/") {
-        sendBmp(http.base64decode(req.body));
-        resp.send(200, "OK\n");
-    } else if (req.path =="/jpg" || req.path == "/jpg/") {
-        sendJpg(http.base64decode(req.body));
-        resp.send(200, "OK\n");
-    } else if (req.path == "/text" || req.path == "/text") {
-        device.send("text",req.body);
-        resp.send(200, "OK\n");
-    } else {
-        resp.send(200, "OK\n");
+    try {
+        local handle = 0;
+        if ("handle" in req.query) {
+            handle = req.query["handle"].tointeger();
+            server.log("Graphics Handle set to "+handle);
+        }
+        if ("bmp" in req.query) {
+            sendBmp(http.base64decode(req.body),handle);
+        } else if ("jpg" in req.query) {
+            server.log("Got new JPEG");
+            sendJpg(http.base64decode(req.body),handle);
+        } else if ("zlib" in req.query) {
+            server.log("Got new ZLIB data.");
+            local format = req.query["format"].tointeger();
+            local bitsperpx = req.query["bitsperpx"].tointeger();
+            local width = req.query["width"].tointeger();
+            local height = req.query["height"].tointeger();
+            sendZlib(http.base64decode(req.body),handle,format,bitsperpx,width,height);
+        } else if ("text" in req.query) {
+            device.send("text",req.query["text"]);
+        }
+        if ("draw" in req.query) {
+            local x = 0;
+            local y = 0;
+            if ("x" in req.query) {
+                x = req.query["x"].tointeger();
+            }
+            if ("y" in req.query) {
+                y = req.query["y"].tointeger();
+            }
+            device.send("draw",{"handle":handle,"xoffset":x,"yoffset":y});
+        }
+        resp.send(200,"OK\n");
+    } catch (err) {
+        server.error("Error parsing new request: "+err);
+        resp.send(400, err);
     }
 });
 
