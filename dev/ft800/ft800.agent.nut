@@ -125,8 +125,8 @@ function sendJpg(jpgdata, handle) {
     device.send("loadjpg", {"jpgdata":jpgdata,"handle":handle});
 }
 
-function sendZlib(zlibdata, handle, format, bitsperpx, width, height) {
-    device.send("loadzlib", {"zlibdata":zlibdata,"handle":handle,"format":format,
+function sendPng(pngdata, handle, format, bitsperpx, width, height) {
+    device.send("loadpng", {"pngdata":pngdata,"handle":handle,"format":format,
         "bitsperpx":bitsperpx,"width":width,"height":height});
 }
 
@@ -142,13 +142,13 @@ http.onrequest(function(req, resp) {
         } else if ("jpg" in req.query) {
             server.log("Got new JPEG");
             sendJpg(http.base64decode(req.body),handle);
-        } else if ("zlib" in req.query) {
+        } else if ("png" in req.query) {
             server.log("Got new ZLIB data.");
             local format = req.query["format"].tointeger();
             local bitsperpx = req.query["bitsperpx"].tointeger();
             local width = req.query["width"].tointeger();
             local height = req.query["height"].tointeger();
-            sendZlib(http.base64decode(req.body),handle,format,bitsperpx,width,height);
+            sendPng(http.base64decode(req.body),handle,format,bitsperpx,width,height);
         } else if ("text" in req.query) {
             device.send("text",req.query["text"]);
         }

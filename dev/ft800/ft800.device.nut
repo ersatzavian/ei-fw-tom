@@ -416,9 +416,10 @@ class ft800 {
         
         /* Touch configuration - configure the resistance value to 1200 - this value is specific to customer requirement and derived by experiment */
         gpu_write_mem16(REG_TOUCH_RZTHRESH, 1200);
-
-        // Start a new set of Display List commands with the coprocessor
-        cp_start();
+        
+        cp_stream();
+        cp_send_cmd(CMD_DLSTART);
+        this.cs_l.write(1);
     }
 
     function gpu_write_mem(addr, byte_array) {
@@ -505,14 +506,6 @@ class ft800 {
     } 
 
     /* COPROCESSOR COMMANDS --------------------------------------------------*/
-    
-    /* Start a new display list with the coprocessor. 
-     * Leaves the "stream" open after sending the display list start command
-     */
-    function cp_start() {
-        cp_stream();
-        cp_send_cmd(CMD_DLSTART);
-    }
 
     /* Initiate a SPI transaction with the address pointer set to the current 
      * position in the coprocessor command FIFO.
@@ -521,10 +514,21 @@ class ft800 {
         this.cs_l.write(1);
         gpu_write_start(RAM_CMD + (cp_ptr & FIFO_SIZE));
     }
-
-    /* End a SPI transaction with the coprocessor by moving the FIFO write pointer.
+    
+    /* End a SPI transaction with the coprocessor. Ends the current display list.
+     */
+    function cp_finish() {
+        cp_stream();
+        cp_send_cmd(0);
+        cp_getfree(4);
+        this.cs_l.write(1);
+    }
+    
+    /* End a SPI transaction with the coprocessor. Ends the current display list
+     * and swaps the display buffer.
      */
     function cp_swap() {
+        cp_stream();
         cp_send_cmd(CMD_SWAP);
         cp_send_cmd(0);
         cp_send_cmd(CMD_DLSTART);
@@ -543,6 +547,7 @@ class ft800 {
         local rdpointerraw = gpu_read_mem(REG_CMD_READ, 2);
         // gpu_read_mem releases the chip select on its own to end the transaction
         local rdptr = ((rdpointerraw[1] << 8) + rdpointerraw[0]) & (FIFO_SIZE + 3);
+        server.log(format("rdptr at 0x%04x",rdptr));
         return rdptr;
         // Don't restart the "stream" here, because this is called from inside cp_getfree
         // cp_getfree will restart the stream when it sees the read pointer in the right place
@@ -552,6 +557,7 @@ class ft800 {
      * part of the coprocessor command FIFO. 
      */ 
     function cp_getfree(n) {
+        server.log("Getting free space.");
         // Wrap around at the command FIFO boundary
         cp_ptr = cp_ptr & 0xfff;
         // End the current SPI Transaction
@@ -567,8 +573,13 @@ class ft800 {
         local start = hardware.micros();
         do {
             // TO-DO: if coprocessor writes "0xFFF" to REG_CMD_READ, it has had a fault.
-            // reset the coprocessor in this case. 
-            fullness = (cp_ptr - cp_rdptr()) & (FIFO_SIZE - 1);
+            // reset the coprocessor in this case.
+            local rdptr = cp_rdptr();
+            if (rdptr == 0xfff) {
+                server.error(format("Coprocessor reported fault, cp_ptr at 0x%04x",cp_ptr));
+                return 1;
+            }
+            fullness = (cp_ptr - rdptr) & (FIFO_SIZE - 1);
             freespace = FIFO_SIZE - fullness;
             if ((hardware.micros() - start) > timeout) {
                 server.error("Timed out waiting for Coprocessor");
@@ -628,6 +639,7 @@ class ft800 {
     function cp_set_color(r,g,b) {
         cp_stream();
         cp_send_cmd(color_rgb(r,g,b));
+        this.cs_l.write(1);
     }
     
     /* Clear the color, stencil, and tag buffers
@@ -639,6 +651,7 @@ class ft800 {
     function cp_clear_cst(c,s,t) {
         cp_stream();
         cp_send_cmd(clear_cst(c,s,t));
+        this.cs_l.write(1);
     }
 
     /* Write a blob into the coprocessor command FIFO. 
@@ -653,8 +666,13 @@ class ft800 {
     function cp_send_blob(myblob) {
         // pad blob to make sure length is a multiple of 4 (FT800 requirement)
         local length = myblob.len()
+        local bytesToAdd = 0;
+        if (length % 4) {
+            bytesToAdd = 4 - (length % 4);
+        }
         myblob.seek(0, 'e');
-        for (local i = 0; i < (4 - (length % 4)); i++) {
+        for (local i = 0; i < bytesToAdd; i++) {
+            ///server.log("Padding blob to 4-byte align.");
             myblob.writen(0x00,'b');
         }
         myblob.seek(0,'b');
@@ -714,10 +732,12 @@ class ft800 {
      * Return: (None)
      */
     function cp_cmd_text(x, y, font, options, string) {
+        cp_stream();
         cp_send_cmd(CMD_TEXT);
         cp_send_cmd(((y << 16) | (x & 0xffff)));
         cp_send_cmd(((options << 16) | font));
         cp_send_string(string + "\0");
+        this.cs_l.write(1);
     }
 
     /* Set the bitmap handle
@@ -754,7 +774,7 @@ class ft800 {
 
         // end this transaction and restart "stream" with coprocessor
         this.cs_l.write(1);
-        cp_start();
+        cp_stream();
         
         cp_send_cmd(begin(BITMAPS));
         cp_send_cmd(bitmaphandle(handle));
@@ -802,24 +822,28 @@ class ft800 {
             // cp_send_blob automatically makes sure we have free space for the block
             cp_send_blob(jpg_data.readblob(BLOCKSIZE));
         }
+        this.cs_l.write(1);
+        
+        server.log("Done Unpacking JPG.")
     }
     
-    /* Decompress ZLIB-compressed data into RAM via the coprocessor and associate it with a bitmap handle.
-     * The ZLIB data is written straight into the command buffer as the coprocessor processes it.
+    /* Decompress a PNG image (they are compressed with DEFLATE) into RAM via the 
+     * coprocessor and associate it with a bitmap handle.
+     * The PNG data is written straight into the command buffer as the coprocessor processes it.
      * The image can then be drawn to the screen by writing the associated bitmap handle into
      * a display list. 
      *
      * This command is the preferred method for pre-loading graphics into the FT800 
      * for a given application because:
-     *  - ZLIB provides lossless compression
+     *  - PNG provides lossless compression
      *  - graphics can be loaded with transparency (JPEG provides only RGB565 and L8 formats)
      *  - the operation is handled through the coprocessor, which simplifies RAM management
      * 
-     * The requester must provide some information about the files stored in the ZLIB blob,
+     * The requester must provide some information about the files stored in the PNG blob,
      * because the blob cannot be parsed directly.
      *
      * Input: 
-     *      zlib_data: a binary blob of JPEG data, including the JPEG header.
+     *      png_data: a binary blob of JPEG data, including the JPEG header.
      *      dest_offset: memory offset to unpack the image into.
      *          Set dest_offset to "-1" to tell the coprocessor to unload the image data 
      *          directly after the last image in RAM
@@ -830,8 +854,8 @@ class ft800 {
      *      height: height of resulting BMP in pixels
      * Return: (None)
      */
-    function cp_load_zlib(zlib_data, dest_offset, handle, bmpformat, bitsperpx, width, height) {
-        server.log(format("Unpacking %d bytes of ZLIB data into 0x%02x with handle %d",zlib_data.len(),dest_offset,handle));
+    function cp_load_png(png_data, dest_offset, handle, bmpformat, bitsperpx, width, height) {
+        server.log(format("Unpacking %d bytes of PNG data into 0x%02x with handle %d",png_data.len(),dest_offset,handle));
         
         // begin writing into the CMD buffer
         cp_stream();
@@ -839,15 +863,18 @@ class ft800 {
         cp_send_cmd(CMD_INFLATE);
         cp_send_cmd(dest_offset);
         local BLOCKSIZE = 2048;
-        for (local i = 0; i < zlib_data.len(); i += BLOCKSIZE) {
+        for (local i = 0; i < png_data.len(); i += BLOCKSIZE) {
             // cp_send_blob automatically makes sure we have free space for the block
-            cp_send_blob(zlib_data.readblob(BLOCKSIZE));
+            cp_send_blob(png_data.readblob(BLOCKSIZE));
         }
         // specify the resulting bmp source location, layout, and size.
         local stride = 4 * ((width * (bitsperpx / 8) + 3) / 4);
         cp_send_cmd(bitmap_source(dest_offset)); 
         cp_send_cmd(bitmap_layout(bmpformat, stride, height)); 
         cp_send_cmd(bitmap_size(NEAREST, BORDER, BORDER, width, height));
+        this.cs_l.write(1);
+        
+        server.log("Done Unpacking PNG.");
     }
     
     /* Use the coprocessor to draw a specified bitmap handle at a specified offset.
@@ -876,26 +903,29 @@ function disp_int_handler() {
 /* AGENT CALLBACKS -----------------------------------------------------------*/
 
 agent.on("text", function(str) {
-    display.cp_clear_to(255,255,255);
+    display.cp_start();
     display.cp_clear_cst(1,1,1);
     display.cp_set_color(200,200,200);
     // X, Y, FONT, OPTIONS, STRING
-    display.cp_cmd_text(FT_DispWidth/2, FT_DispWidth/2,31,OPT_CENTER,str);
+    display.cp_cmd_text(FT_DispWidth/2, FT_DispHeight/2,31,OPT_CENTER,str);
     display.cp_swap();
 });
 
 agent.on("loadjpg", function(req) {
-    local dest_offset = -1; // place in first free location in RAM
-    local options = 0;
-    display.cp_load_jpg(req.jpgdata,-1,req.handle,options);
-});
-
-agent.on("loadzlib", function(req) {
     local dest_offset = 0; // place in first free location in RAM
     if ("dest_offset" in req) {
         dest_offset = req.dest_offset;
     }
-    display.cp_load_zlib(req.zlibdata, dest_offset, req.handle, req.format, req.bitsperpx, req.width, req.height);
+    local options = 0;
+    display.cp_load_jpg(req.jpgdata,dest_offset,req.handle,options);
+});
+
+agent.on("loadpng", function(req) {
+    local dest_offset = 0; // place in first free location in RAM
+    if ("dest_offset" in req) {
+        dest_offset = req.dest_offset;
+    }
+    display.cp_load_png(req.pngdata, dest_offset, req.handle, req.format, req.bitsperpx, req.width, req.height);
 })
 
 agent.on("loadbmp", function(req) {
@@ -935,10 +965,10 @@ display.power_down(function() {
         display.init();
         display.config();
         server.log("Powered Up");
-        // clear display to white
         display.cp_clear_to(0,0,0);
         // Doing development on my desk with display upside-down.
         display.set_rotation(1);
+        
         // clear the color, stencil, and tag buffers
         display.cp_clear_cst(1,1,1);
         // set color for drawing primitives (green)
@@ -948,6 +978,5 @@ display.power_down(function() {
         display.cp_cmd_text(100, 25, 18, OPT_RIGHTX, "ft800:/$ _");
         // draw!
         display.cp_swap();
-        //display.cp_text("ft800:/$ _",18,OPT_CENTERX,0,255,0);
     });
 });
