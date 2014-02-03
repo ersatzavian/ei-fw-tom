@@ -717,6 +717,28 @@ class ft800 {
         }
         this.spi.write(rawStr);
     }
+    
+    /* Send CMD_BUTTON to the coprocessor; draws a button widget.
+     * Input: 
+     *      x:      x-coordinate of button top-left, in pixels
+     *      y:      y-coordinate of button top-left, in pixels
+     *      width:  width of button in pixels 
+     *      height: height of button in pixels
+     *      font:   bitmap handle to specify font
+     *      options: 
+     *          OPT_FLAT: remove 3D effect on button
+     *          Button is 3D by default.
+     *      str:    button label.
+     */
+    function cp_button(x, y, width, height, font, str, options = 0) {
+        cp_stream(); 
+        cp_send_cmd(CMD_BUTTON);
+        cp_send_cmd(((y & 0xffff) << 16) | (x & 0xffff));
+        cp_send_cmd(((height & 0xffff) << 16) | (width & 0xffff));
+        cp_send_cmd(((options & 0xffff) << 16) | (font & 0xffff));
+        cp_send_string(str+"\0");
+        this.cs_l.write(1);
+    }
 
     /* Send CMD_TEXT to the coprocessor.
      * Input:
@@ -846,15 +868,13 @@ class ft800 {
      * because the blob cannot be parsed directly.
      *
      * Input: 
-     *      png_data: a binary blob of JPEG data, including the JPEG header.
-     *      dest_offset: memory offset to unpack the image into.
-     *          Set dest_offset to "-1" to tell the coprocessor to unload the image data 
-     *          directly after the last image in RAM
-     *      handle: bitmap handle to assign the resulting bitmap to.
-     *      format: graphics format to use for the resulting BMP data (e.g. ARGB1555)
-     *      bitsperpx: 0-32
-     *      width: width of resulting BMP in pixels
-     *      height: height of resulting BMP in pixels
+     *      png_data:       a binary blob of PNG data. No header.
+     *      dest_offset:    memory offset to unpack the image into.
+     *      handle:         bitmap handle to assign the resulting bitmap to.
+     *      format:         graphics format to use for the resulting BMP data (e.g. ARGB1555)
+     *      bitsperpx:      0-32
+     *      width:          width of resulting BMP in pixels
+     *      height:         height of resulting BMP in pixels
      * Return: (None)
      */
     function cp_load_png(png_data, dest_offset, handle, bmpformat, bitsperpx, width, height) {
@@ -974,11 +994,14 @@ display.power_down(function() {
         
         // clear the color, stencil, and tag buffers
         display.cp_clear_cst(1,1,1);
-        // set color for drawing primitives (green)
-        display.cp_set_color(0,255,0);
+        // set color for drawing text (black)
+        display.cp_set_color(0,0,0);
         // send a text string to the coprocessor
         // X, Y, FONT, OPTIONS, STRING
-        display.cp_cmd_text(100, 25, 18, OPT_RIGHTX, "ft800:/$ _");
+        //display.cp_cmd_text(100, 25, 18, OPT_RIGHTX, "ft800:/$ _");
+        // set the foreground color (to change the color of the button)
+        // draw a button
+        display.cp_button(10,10,160,100,30,"Button!",0);
         // draw!
         display.cp_swap();
     });
