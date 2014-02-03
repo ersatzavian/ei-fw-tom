@@ -718,6 +718,61 @@ class ft800 {
         this.spi.write(rawStr);
     }
     
+    /* Change the foreground color to use when drawing coprocessor widgets.
+     * Input:
+     *      r, g, b: color values (0-255)
+     * Return: (None)
+     */
+    function cp_fgcolor(r, g, b) {
+        cp_stream();
+        cp_send_cmd(CMD_FGCOLOR);
+        cp_send_cmd(((r & 0xff) << 16) | ((g & 0xff) << 8) | (b & 0xff));
+        this.cs_l.write(1);
+    }
+    
+    /* Change the background color to use when drawing coprocessor widgets.
+     * Input:
+     *      r, g, b: color values (0-255)
+     * Return: (None)
+     */
+    function cp_bgcolor(r, g, b) {
+        cp_stream();
+        cp_send_cmd(CMD_BGCOLOR);
+        cp_send_cmd(((r & 0xff) << 16) | ((g & 0xff) << 8) | (b & 0xff));
+        this.cs_l.write(1);
+    }
+    
+    /* Change the gradient color to use when drawing coprocessor widgets.
+     * Usually used for 3D button highlight color
+     * Input:
+     *      r, g, b: color values (0-255)
+     * Return: (None)
+     */
+    function cp_gradcolor(r, g, b) {
+        cp_stream();
+        cp_send_cmd(CMD_GRADCOLOR);
+        cp_send_cmd(((r & 0xff) << 16) | ((g & 0xff) << 8) | (b & 0xff));
+        this.cs_l.write(1);
+    }
+    
+    /* Send CMD_GRADIENT to the coprocessor; draws a smooth color gradient
+     * Input: 
+     *      x0, y0:     coordinates of point 0, in pixels
+     *      r0,g0,b0:   color values of point 0 (0 - 255)
+     *      x1, y1:     coordinates of point 1, in pixels
+     *      r1,g1,b1:   color values of point 1 (0 - 255)
+     * Return: (None)
+     */
+    function cp_gradient(x0, y0, r0, g0, b0, x1, y1, r1, g1, b1) {
+        cp_stream(); 
+        cp_send_cmd(CMD_GRADIENT);
+        cp_send_cmd(((y0 & 0xffff) << 16) | (x0 & 0xffff));
+        cp_send_cmd(((r0 & 0xff) << 16) | ((g0 & 0xff) << 8) | (b0 & 0xff));
+        cp_send_cmd(((y1 & 0xffff) << 16) | (x1 & 0xffff));
+        cp_send_cmd(((r1 & 0xff) << 16) | ((g1 & 0xff) << 8) | (b1 & 0xff));
+        this.cs_l.write(1);
+    }
+    
     /* Send CMD_BUTTON to the coprocessor; draws a button widget.
      * Input: 
      *      x:      x-coordinate of button top-left, in pixels
@@ -739,6 +794,207 @@ class ft800 {
         cp_send_string(str+"\0");
         this.cs_l.write(1);
     }
+    
+    /* Send CMD_KEYS to the coprocessor; draws a row of keys.
+     * Input: 
+     *      x:      x-coordinate of top-left corner of key row, in pixels
+     *      y:      y-coordinate of top-left corner of key row, in pixels
+     *      width:  width of each key in pixels 
+     *      height: height of each key in pixels
+     *      font:   bitmap handle to specify font
+     *      options: 
+     *          OPT_FLAT: remove 3D effect on button
+     *          OPT_CENTER: draw keys at minimum size centered within the W x H rectangle
+     *          Button is 3D by default.
+     *      str:    string of key labels, one char per key. The TAG value is set
+     *              to the ASCII value of each key, so key presses can be detected using REG_TOUCH_TAG
+     */
+    function cp_keys(x, y, width, height, font, str, options = 0) {
+        cp_stream(); 
+        cp_send_cmd(CMD_KEYS);
+        cp_send_cmd(((y & 0xffff) << 16) | (x & 0xffff));
+        cp_send_cmd(((height & 0xffff) << 16) | (width & 0xffff));
+        cp_send_cmd(((options & 0xffff) << 16) | (font & 0xffff));
+        cp_send_string(str+"\0");
+        this.cs_l.write(1);
+    }
+    
+    /* Send CMD_GUAGE to the coprocessor; draws a gauge widget.
+     * Input: 
+     *      x:      x-coordinate of the gauge center, in pixels
+     *      y:      y-coordinate of the gauge center, in pixels
+     *      radius
+     *      major:  number of major divisions on the guage (1-10)
+     *      minor:  number of minor divisions per major division (1-10)
+     *      value:  displayed value, between 0 and range, inclusive
+     *      range:  range of gauge (max value)
+     *      options: 
+     *          OPT_3D:         default
+     *          OPT_FLAT:       removes 3D effect
+     *          OPT_NOBACK:     omit background
+     *          OPT_NOTICKS:    omit tick marks on guage
+     *          OPT_NOPOINTER:  omit pointer
+     * Return: (None)
+     */
+    function cp_gauge(x, y, radius, major, minor, value, range, options = 0) {
+        cp_stream(); 
+        cp_send_cmd(CMD_GAUGE);
+        cp_send_cmd(((y & 0xffff) << 16) | (x & 0xffff));
+        // Docs are wrong; radius is actually diameter ;P
+        cp_send_cmd(((options & 0xffff) << 16) | ((radius * 2) & 0xffff));
+        cp_send_cmd(((minor & 0xffff) << 16) | (major & 0xffff));
+        cp_send_cmd(((range & 0xffff) << 16) | (value & 0xffff));
+        this.cs_l.write(1);
+    }
+
+    
+    /* Send CMD_CLOCK to the coprocessor; draws a clock widget.
+     * Input: 
+     *      x:      x-coordinate of the clock center, in pixels
+     *      y:      y-coordinate of the clock center, in pixels
+     *      radius
+     *      hours
+     *      minutes
+     *      seconds
+     *      ms:     milliseconds
+     *      options:
+     *          OPT_3D:         default
+     *          OPT_FLAT:       removes 3D effect
+     *          OPT_NOBACK:     omit background
+     *          OPT_NOTICKS:    omit 12-hour ticks
+     *          OPT_NOSECS:     omit second hand
+     *          OPT_NOHM:       omit minute and hour hands
+     *          OPT_NOHANDS:    omit all hands
+     * Return: (None)
+     */
+    function cp_clock(x, y, radius, hours, minutes, seconds, ms, options = 0) {
+        cp_stream(); 
+        cp_send_cmd(CMD_CLOCK);
+        cp_send_cmd(((y & 0xffff) << 16) | (x & 0xffff));
+        // Docs are wrong; radius is actually diameter ;P
+        cp_send_cmd(((options & 0xffff) << 16) | ((radius * 2) & 0xffff));
+        cp_send_cmd(((minutes & 0xffff) << 16) | (hours & 0xffff));
+        cp_send_cmd(((ms & 0xffff) << 16) | (seconds & 0xffff));
+        this.cs_l.write(1);
+    }
+    
+    /* Send CMD_PROGRESS to the coprocessor; draws a progress bar.
+     * Input: 
+     *      x, y:   coordinates of top-left corner, in pixels
+     *      width:  width of bar in pixels
+     *      height: height of bar in pixels
+     *  -> if width is greater than height, bar is drawn horizontally
+     *  -> otherwise, bar is drawn vertically.
+     *      value:  displayed value, between 0 and range, inclusive
+     *      range:  range of bar (max value)
+     *      options:
+     *          OPT_3D:         default
+     *          OPT_FLAT:       removes 3D effect
+     * Return: (None)
+     */
+    function cp_progress(x, y, width, height, value, range, options = 0) {
+        cp_stream(); 
+        cp_send_cmd(CMD_PROGRESS);
+        cp_send_cmd(((y & 0xffff) << 16) | (x & 0xffff));
+        cp_send_cmd(((height & 0xffff) << 16) | (width & 0xffff));
+        cp_send_cmd(((value & 0xffff) << 16) | (options & 0xffff));
+        cp_send_cmd(range & 0xffff);
+        this.cs_l.write(1);
+    }
+    
+    /* Send CMD_SCROLL to the coprocessor; draws a scroll bar.
+     * Input: 
+     *      x, y:   coordinates of top-left corner, in pixels
+     *      width:  width of bar in pixels 
+     *      height: height of bar in pixels
+     *  -> if width is greater than height, bar is drawn horizontally
+     *  -> otherwise, bar is drawn vertically.
+     *      value:  displayed value, between 0 and range, inclusive
+     *      range:  range of bar (max value)
+     *      size:   size of marker (pixels)
+     *      options:
+     *          OPT_3D:         default
+     *          OPT_FLAT:       removes 3D effect
+     * Return: (None)
+     */
+    function cp_scroll(x, y, width, height, value, range, size, options = 0) {
+        cp_stream(); 
+        cp_send_cmd(CMD_SCROLLBAR);
+        cp_send_cmd(((y & 0xffff) << 16) | (x & 0xffff));
+        cp_send_cmd(((height & 0xffff) << 16) | (width & 0xffff));
+        cp_send_cmd(((value & 0xffff) << 16) | (options & 0xffff));
+        cp_send_cmd(((range & 0xffff) << 16) | (size & 0xffff));
+        this.cs_l.write(1);
+    }
+    
+    /* Send CMD_SLIDER to the coprocessor; draws a slider bar.
+     * Input: 
+     *      x, y:   coordinates of top-left corner, in pixels
+     *      width:  width of bar in pixels 
+     *      height: height of bar in pixels
+     *  -> if width is greater than height, bar is drawn horizontally
+     *  -> otherwise, bar is drawn vertically.
+     *      value:  displayed value, between 0 and range, inclusive
+     *      range:  range of bar (max value)
+     *      options:
+     *          OPT_3D:         default
+     *          OPT_FLAT:       removes 3D effect
+     * Return: (None)
+     */
+    function cp_slider(x, y, width, height, value, range, options = 0) {
+        cp_stream(); 
+        cp_send_cmd(CMD_SLIDER);
+        cp_send_cmd(((y & 0xffff) << 16) | (x & 0xffff));
+        cp_send_cmd(((height & 0xffff) << 16) | (width & 0xffff));
+        cp_send_cmd(((value & 0xffff) << 16) | (options & 0xffff));
+        cp_send_cmd(range & 0xffff);
+        this.cs_l.write(1);
+    }
+    
+    /* Send CMD_DIAL to the coprocessor; draws a rotary dial control.
+     * Input: 
+     *      x, y:   coordinates of dial center, in pixels
+     *      radius
+     *      value:  position of dial (0-65535)
+     *      options:
+     *          OPT_3D:         default
+     *          OPT_FLAT:       removes 3D effect
+     * Return: (None)
+     */
+    function cp_dial(x, y, radius, value, options = 0) {
+        server.log("Drawing a Dial at ("+x+", "+y+")");
+        cp_stream(); 
+        cp_send_cmd(CMD_DIAL);
+        cp_send_cmd(((y & 0xffff) << 16) | (x & 0xffff));
+        // datasheet calls it radius, but turns out it's diameter
+        cp_send_cmd(((options & 0xffff) << 16) | ((radius * 2) & 0xffff));
+        cp_send_cmd(value & 0xffff);
+        this.cs_l.write(1);
+    }
+    
+    /* Send CMD_TOGGLE to the coprocessor; draws a toggle switch
+     * Input: 
+     *      x, y:   coordinates of top-left corner, in pixels
+     *      width:  width of toggle, in pixels
+     *      font:   font bitmap handle
+     *      state:  state of the toggle. 0 is of, 1 is on
+     *      labeltrue,labelfalse: string labels for toggle states
+     *      options:
+     *          OPT_3D:         default
+     *          OPT_FLAT:       removes 3D effect
+     * Return: (None)
+     */
+    function cp_toggle(x, y, width, font, state, labeltrue, labelfalse, options = 0) {
+        // coprocessor expects 65535 for on (never heard of bool??)
+        if (state) {state = 65535};
+        cp_stream(); 
+        cp_send_cmd(CMD_TOGGLE);
+        cp_send_cmd(((y & 0xffff) << 16) | (x & 0xffff));
+        cp_send_cmd(((font & 0xffff) << 16) | (width & 0xffff));
+        cp_send_cmd(((state & 0xffff) << 16) | (options & 0xffff));
+        cp_send_string(labeltrue+"\xff"+labelfalse+"\0");
+        this.cs_l.write(1);
+    }
 
     /* Send CMD_TEXT to the coprocessor.
      * Input:
@@ -753,7 +1009,7 @@ class ft800 {
      *      string: 
      * Return: (None)
      */
-    function cp_cmd_text(x, y, font, options, string) {
+    function cp_text(x, y, font, options, string) {
         cp_stream();
         cp_send_cmd(CMD_TEXT);
         cp_send_cmd(((y << 16) | (x & 0xffff)));
@@ -761,7 +1017,7 @@ class ft800 {
         cp_send_string(string + "\0");
         this.cs_l.write(1);
     }
-
+    
     /* Set the bitmap handle
      * This allows us to perform graphics operations on this handle, treating it as a sprite
      * Input:
@@ -994,14 +1250,37 @@ display.power_down(function() {
         
         // clear the color, stencil, and tag buffers
         display.cp_clear_cst(1,1,1);
-        // set color for drawing text (black)
+        // draw a gradient in the background (x0, y0, r0, g0, b0, x1, y1, r1, g1, b1)
+        display.cp_gradient(0,0,0,0,0,480,272,255,255,255);
+        display.cp_fgcolor(20,80,220);
+        display.cp_bgcolor(20,80,220)
+        display.cp_gradcolor(255,255,255);
+        // set color for drawing text (green)
+        display.cp_set_color(0,255,0);
+        // draw a formatted string (x, y, font handle, options, string)
+        display.cp_text(100, 25, 18, OPT_RIGHTX, "ft800:/$ _");
+        // switch text color back to black for the rest of these objects
         display.cp_set_color(0,0,0);
-        // send a text string to the coprocessor
-        // X, Y, FONT, OPTIONS, STRING
-        //display.cp_cmd_text(100, 25, 18, OPT_RIGHTX, "ft800:/$ _");
-        // set the foreground color (to change the color of the button)
-        // draw a button
-        display.cp_button(10,10,160,100,30,"Button!",0);
+        // draw a progress bar (x, y, width, height, value, range, [options])
+        display.cp_progress(15,45,250,10,33,100,0);
+        // draw a scroll bar (x, y, width, height, value, range, size, [options])
+        display.cp_scroll(15,60,250,10,45,100,10,0);
+        // draw a slider bar (x, y, width, height, value, range, [options])
+        display.cp_slider(15,75,250,10,20,100,0);
+        // draw a rotary dial (x, y, radius, value, [options])
+        display.cp_dial(340, 50, 20, 0x8000, 0);
+        // draw a toggle switch (x, y, width, font, state, labeltrue, labelfalse, [options])
+        display.cp_toggle(20, 100, 30, 21, 1, "ON", "OFF", 0);
+        // draw a row of keys (x, y, width, height, font handle, labels, [options]);
+        display.cp_keys(10,135,316,60,30,"12345",0);
+        // draw buttons (x, y, width, height, font handle, label, [options])
+        display.cp_button(10,200,145,60,30,"<-",0);
+        display.cp_button(165,200,145,60,30,"Start",0);
+        display.cp_button(320,200,145,60,30,"->",0);
+        // draw a clock (x, y, radius, hours, minutes, seconds, ms, [options])
+        display.cp_clock(430, 50, 20, 12, 35, 15, 10, OPT_FLAT);
+        // draw a gauge (x, y, radius, major divs, minor divs, value, range, [options]
+        display.cp_gauge(430, 140, 20, 10, 5, 68, 100, OPT_FLAT);
         // draw!
         display.cp_swap();
     });
