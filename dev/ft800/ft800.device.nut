@@ -838,6 +838,9 @@ class ft800 {
      *  - PNG provides lossless compression
      *  - graphics can be loaded with transparency (JPEG provides only RGB565 and L8 formats)
      *  - the operation is handled through the coprocessor, which simplifies RAM management
+     *
+     * Use the img_convert tool from FTDI to pre-parse .PNG files, then send the .bin output file
+     * http://www.ftdichip.com/Support/Utilities.htm
      * 
      * The requester must provide some information about the files stored in the PNG blob,
      * because the blob cannot be parsed directly.
