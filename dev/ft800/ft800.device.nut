@@ -1018,6 +1018,104 @@ class ft800 {
         this.cs_l.write(1);
     }
     
+    /* Start an animated spinner
+     * Input:
+     *      x, y: coordinates of top-left corner of spinner (pixels)
+     *      style: 0-3 to specify pre-made spinner styles
+     *      scale: scaling coefficient; 0 = no scaling
+     * Return: (None)
+     */
+    function cp_spinner(x, y, style, scale=0) {
+        cp_stream();
+        cp_send_cmd(CMD_SPINNER);
+        cp_send_cmd(((y << 16) | (x & 0xffff)));
+        cp_send_cmd(((scale << 16) | (style & 0xff)));
+        this.cs_l.write(1);
+    }
+     
+    /* Start an animated screensaver
+     * After this command, the coprocessor continuously updates REG_MACRO_0 with 
+     * VERTEX2F of varying coordinates. By calling this command after creating an
+     * appropriate display list, the command will shift the bitmap around the screen
+     * without any additional work with the MCU.
+     * 
+     * Send CMD_STOP with cp_cmdstop() to halt the screensaver.
+     *
+     * Input: (None)
+     * Return: (None)
+     */
+    function cp_screensaver() {
+        cp_stream();
+        cp_send_cmd(CMD_SCREENSAVER);
+        this.cs_l.write(1);
+    }
+    
+    /* Start interactive sketching and store result in RAM
+     * Input: 
+     *      x, y: coordinates of sketch area top-left (pixels)
+     *      width, height: dimensions of sketch area (pixels)
+     *      ptr: base address of sketch bitmap
+     *      format: format of sketch bitmap (L1 or L8)
+     * Return: (None)
+     */
+    function cp_sketch(x, y, width, height, ptr, format) {
+        cp_stream();
+        cp_send_cmd(CMD_SKETCH);
+        cp_send_cmd(((y << 16) | (x & 0xffff)));
+        cp_send_cmd(((height << 16) | (width & 0xffff)));
+        cp_send_cmd(((ptr << 16) | (format & 0xffff)));
+        this.cs_l.write(1);
+    }
+    
+    /* Stop a continuous coprocessor operation, such as SKETCH or SCREENSAVER
+     * Input: (None)
+     * Return: (None)
+     */
+    function cp_cmdstop() {
+        cp_stream();
+        cp_send_cmd(CMD_STOP);
+        this.cs_l.write(1);
+    }
+    
+    /* Take a snapshot of the current screen. Snapshot is stored as an ARGB4 bitmap.
+     * Bitmap size is the size of the screen as set in REG_HSIZE and REG_VSIZE.
+     * Curing the snapshot process, the display should be disabled by setting REG_PCLK to 0.
+     * Input:
+     *      ptr: offset to where snapshot should be stored.
+     * Return: (None)
+     */
+    function cp_snapshot(ptr) {
+        // disable display before sending coprocessor commands
+        gpu_write_mem8(REG_PCLK, 0);
+        cp_stream();
+        cp_send_cmd(CMD_SNAPSHOT);
+        cp_send_cmd(ptr);
+        this.cs_l.write(1);
+        // re-enable display
+        gpu_write_mem8(REG_PCLK, FT_DispPCLK);
+    }
+    
+    /* Track the touch on a particular object with one valid tag assigned.
+     * Coprocessor updates REG_TRACKER periodically (w/ frame rate of panel)
+     * REG_TRACKER will hold:
+     *      rotary mode: angle between touching point and center of object
+     *              value is in 1/65535 of a circle
+     *      linear mode: value is in 1/65535 of the range of the object
+     * Input: 
+     *      x, y: coordinates of track area (top-left for linear tracker, center
+     *              for rotary tracker, in pixels)
+     *      width, height: dimensions of track area, in pixels
+     *      tag:  tag of the object to be tracked, 1-255
+     * Return: (None)
+     */
+    function cp_track(x, y, width, height, tag) {
+        cp_stream();
+        cp_send_cmd(CMD_TRACK);
+        cp_send_cmd(((y << 16) | (x & 0xffff)));
+        cp_send_cmd(((height << 16) | (width & 0xffff)));
+        cp_send_cmd(tag & 0xff);
+    }
+    
     /* Set the bitmap handle
      * This allows us to perform graphics operations on this handle, treating it as a sprite
      * Input:
