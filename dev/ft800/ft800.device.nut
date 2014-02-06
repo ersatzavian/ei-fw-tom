@@ -123,6 +123,7 @@ const EDGE_STRIP_A         = 7;
 const EDGE_STRIP_B         = 8;
 const EDGE_STRIP_L         = 6;
 const EDGE_STRIP_R         = 5;
+const END                  = 0x0000000;
 const EQUAL                = 5;
 const GEQUAL               = 4;
 const GREATER              = 3;
@@ -232,6 +233,7 @@ const REPLACE              = 2;
 const RGB332               = 4;
 const RGB565               = 7;
 const SRC_ALPHA            = 2;
+const TAG                  = 0x3000000;
 const TEXT8X8              = 9;
 const TEXTVGA              = 10;
 const TOUCHMODE_CONTINUOUS = 3;
@@ -282,16 +284,36 @@ class ft800 {
     spi             = null;
     cs_l            = null;
     pd_l            = null;
-    int             = null;
+    int_l           = null;
     
-    constructor(_spi, _cs_l, _pd_l, _int) {
+    tag_callbacks   = array(256,null);
+    
+    function int_handler() {
+        // interrupt is active-low
+        if (this.int_l.read()) {return;}
+        //server.log("Display Interrupt Received!");
+        local int_byte = gpu_read_mem(REG_INT_FLAGS, 1);
+        //server.log(format("REG_INT_FLAGS: 0x%02x", int_byte[0]));
+        if (int_byte && 0x02) {
+            local touch_tag = gpu_read_mem(REG_TAG, 1);
+            server.log(format("Detected touch on tag %d", touch_tag[0]));
+            if (tag_callbacks[touch_tag[0]]) {
+                server.log(format("Executing Touch callback for tag %d", touch_tag[0]));
+                tag_callbacks[touch_tag[0]]();
+            }
+        }
+    }
+    
+    constructor(_spi, _cs_l, _pd_l, _int_l) {
         this.spi    = _spi;
         this.cs_l   = _cs_l;
         this.pd_l   = _pd_l;
-        this.int    = _int;
+        this.int_l  = _int_l;
 
         cp_ptr      = 0;
         freespace   = FIFO_SIZE;
+        
+        this.int_l.configure(DIGITAL_IN, int_handler.bindenv(this));
     }
     
     function clear_color_rgb(red,green,blue) {
@@ -314,6 +336,9 @@ class ft800 {
     }
     function bitmaphandle(handle) {
         return (5<<24)|((handle & 15)<<0);
+    }
+    function touchtag(tag) {
+        return (3<<24)|((tag & 15));
     }
     function vertex2f(x, y) {
         return (1<<30)|(((x)&32767)<<15)|(((y)&32767)<<0);
@@ -399,12 +424,15 @@ class ft800 {
         gpu_write_mem16(REG_VOFFSET, FT_DispVOffset);
         gpu_write_mem16(REG_VSYNC0, FT_DispVSync0);
         gpu_write_mem16(REG_VSYNC1, FT_DispVSync1);
+        // REG_SWIZZLE is there in case your panel switches R,G,B around
         gpu_write_mem8(REG_SWIZZLE, FT_DispSwizzle);
+        // start the display clock
         gpu_write_mem8(REG_PCLK_POL, FT_DispPCLKPol);
         gpu_write_mem8(REG_PCLK, FT_DispPCLK);
+        // set the display size
         gpu_write_mem16(REG_HSIZE, FT_DispWidth);
         gpu_write_mem16(REG_VSIZE, FT_DispHeight);
-    
+        
         /*Set DISP_EN to 1*/
         //local reg_gpio_dir = gpu_read_mem(REG_GPIO_DIR, 1);
         //server.log("REG_GPIO_DIR: " + reg_gpio_dir[0]);
@@ -506,7 +534,22 @@ class ft800 {
     } 
 
     /* COPROCESSOR COMMANDS --------------------------------------------------*/
-
+    
+    function cp_start() {
+        cp_stream();
+        cp_send_cmd(CMD_DLSTART);
+        this.cs_l.write(1);
+    }
+    
+    /* End a SPI transaction with the coprocessor. Ends the current display list.
+     */
+    function cp_finish() {
+        cp_stream();
+        cp_send_cmd(END);
+        cp_getfree(4);
+        this.cs_l.write(1);
+    }
+    
     /* Initiate a SPI transaction with the address pointer set to the current 
      * position in the coprocessor command FIFO.
      */
@@ -515,22 +558,13 @@ class ft800 {
         gpu_write_start(RAM_CMD + (cp_ptr & FIFO_SIZE));
     }
     
-    /* End a SPI transaction with the coprocessor. Ends the current display list.
-     */
-    function cp_finish() {
-        cp_stream();
-        cp_send_cmd(0);
-        cp_getfree(4);
-        this.cs_l.write(1);
-    }
-    
     /* End a SPI transaction with the coprocessor. Ends the current display list
      * and swaps the display buffer.
      */
     function cp_swap() {
         cp_stream();
         cp_send_cmd(CMD_SWAP);
-        cp_send_cmd(0);
+        cp_send_cmd(END);
         cp_send_cmd(CMD_DLSTART);
         cp_getfree(4);
         this.cs_l.write(1);
@@ -547,7 +581,7 @@ class ft800 {
         local rdpointerraw = gpu_read_mem(REG_CMD_READ, 2);
         // gpu_read_mem releases the chip select on its own to end the transaction
         local rdptr = ((rdpointerraw[1] << 8) + rdpointerraw[0]) & (FIFO_SIZE + 3);
-        server.log(format("rdptr at 0x%04x",rdptr));
+        //server.log(format("rdptr at 0x%04x",rdptr));
         return rdptr;
         // Don't restart the "stream" here, because this is called from inside cp_getfree
         // cp_getfree will restart the stream when it sees the read pointer in the right place
@@ -556,8 +590,7 @@ class ft800 {
     /* Set the command write pointer and wait for the coprocessor to process all or
      * part of the coprocessor command FIFO. 
      */ 
-    function cp_getfree(n) {
-        server.log("Getting free space.");
+    function cp_getfree(n, timeout = 250000) {
         // Wrap around at the command FIFO boundary
         cp_ptr = cp_ptr & 0xfff;
         // End the current SPI Transaction
@@ -569,7 +602,6 @@ class ft800 {
         // Wait for the coprocessor to process enough of the current buffer for 
         // us to have n bytes free for new commands.
         local fullness = 0;
-        local timeout = 500000;
         local start = hardware.micros();
         do {
             // TO-DO: if coprocessor writes "0xFFF" to REG_CMD_READ, it has had a fault.
@@ -612,6 +644,19 @@ class ft800 {
         cp_ptr += 4;
         freespace -= 4;
     }
+    
+    /* Run the touch screen calibration command to align the touch coordinates.
+     */
+    function cp_calibrate() {
+        cp_stream();
+        cp_send_cmd(clear_color_rgb(0,0,0));
+        cp_send_cmd(clear_cst(1,1,0));
+        cp_send_cmd(CMD_CALIBRATE);
+        cp_send_cmd(0xffffffff);
+        this.cs_l.write(1);
+        // provide a 10-second timeout to complete calibration before returning.
+        cp_getfree(FIFO_SIZE, 10000000);
+    } 
     
     /* Clear the screen to a specified RGB color through the coprocessor.
      * This command sets the default color of the screen when nothing is drawn on it,
@@ -771,6 +816,20 @@ class ft800 {
         cp_send_cmd(((y1 & 0xffff) << 16) | (x1 & 0xffff));
         cp_send_cmd(((r1 & 0xff) << 16) | ((g1 & 0xff) << 8) | (b1 & 0xff));
         this.cs_l.write(1);
+    }
+    
+    /* Use coprocessor commands to write a point primitive into the current display list
+     * Input:
+     *      x, y: coordinates of point center in pixels
+     *      radius: point radius in pixels
+     * Return: (None);
+     */
+    function cp_point(x, y, radius) {
+        cp_stream();
+        cp_send_cmd(point_size(radius * 16));
+        cp_send_cmd(begin(FTPOINTS));
+        cp_send_cmd(vertex2f(x * 16, y * 16));
+        cp_send_cmd(END);
     }
     
     /* Send CMD_BUTTON to the coprocessor; draws a button widget.
@@ -1123,13 +1182,25 @@ class ft800 {
      * Return: (None)
      */
     function cp_set_bmphandle(handle) {
-        server.log(format("Setting current bitmap handle to %d",handle));
         cp_stream();
         cp_send_cmd(bitmaphandle(handle));
         // Don't flush the command buffer; leave the display list open so we can finish writing it.
         this.cs_l.write(1);
     }
     
+    /* Set the touch tag for a graphics object.
+     * Input: 
+     *      tag:    Valid tags are 1-255
+     *      callback: a function to call when the tagged object is touched.
+     * Return: (None)
+     */
+    function cp_set_tag(tag, callback=null) {
+        cp_stream();
+        cp_send_cmd(touchtag(tag));
+        this.tag_callbacks[tag] = callback;
+        this.cs_l.write(1);
+    }
+     
     /* Load a bitmap into general memory, then set display list context through the coprocessor.
      * This command requires some information be parsed from the bitmap header. 
      * Input:
@@ -1158,6 +1229,7 @@ class ft800 {
         cp_send_cmd(bitmap_layout(bitmap_header.format, bitmap_header.stride, bitmap_header.height));
         //gpu_write_ram32(bitmap_layout(ARGB1555, bitmap_header.stride, bitmap_header.height));
         cp_send_cmd(bitmap_size(NEAREST, BORDER, BORDER, bitmap_header.width, bitmap_header.height));
+        cp_send_cmd(END);
     
         this.cs_l.write(1);
     }
@@ -1269,12 +1341,60 @@ class ft800 {
         cp_send_cmd(clear_cst(1,1,1));
         cp_send_cmd(begin(BITMAPS));
         cp_send_cmd(vertex2ii(offset_x,offset_y,handle,0));
+        cp_send_cmd(END);
         cp_swap();
     }
 }
 
-function disp_int_handler() {
-    server.log("Display Interrupt Received!");
+function calibrate() {
+    server.log("Calibrating Touch Screen.");
+    display.cp_cmdstop();
+    display.cp_calibrate();
+    server.log("Done Calibrating.");
+    example();
+}
+
+function example() {
+    display.cp_clear_to(0,0,0);
+    // clear the color, stencil, and tag buffers
+    display.cp_clear_cst(1,1,1);
+    // draw a gradient in the background (x0, y0, r0, g0, b0, x1, y1, r1, g1, b1)
+    display.cp_gradient(0,0,0,0,0,480,272,255,255,255);
+    // set colors for different parts of widgets (r, g, b)
+    display.cp_fgcolor(20,80,220);
+    display.cp_bgcolor(20,80,220)
+    display.cp_gradcolor(255,255,255);
+    // set color for drawing text (green)
+    display.cp_set_color(0,255,0);
+    // draw a formatted string (x, y, font handle, options, string)
+    display.cp_text(100, 25, 18, OPT_RIGHTX, "ft800:/$ _");
+    // switch text color back to black for the rest of these objects
+    display.cp_set_color(0,0,0);
+    // draw a progress bar (x, y, width, height, value, range, [options])
+    display.cp_progress(15,45,250,10,33,100,0);
+    // draw a scroll bar (x, y, width, height, value, range, size, [options])
+    display.cp_scroll(15,60,250,10,45,100,10,0);
+    // draw a slider bar (x, y, width, height, value, range, [options])
+    display.cp_slider(15,75,250,10,20,100,0);
+    // draw a rotary dial (x, y, radius, value, [options])
+    display.cp_dial(340, 50, 20, 0x8000, 0);
+    // draw a toggle switch (x, y, width, font, state, labeltrue, labelfalse, [options])
+    display.cp_toggle(20, 100, 30, 21, 1, "ON", "OFF", 0);
+    // draw a row of keys (x, y, width, height, font handle, labels, [options]);
+    display.cp_keys(10,135,316,60,30,"12345",0);
+    // draw buttons (x, y, width, height, font handle, label, [options])
+    display.cp_set_tag(1)
+    display.cp_button(10,200,145,60,30,"<-",0);
+    display.cp_set_tag(2);
+    display.cp_button(165,200,145,60,30,"Start",0);
+    display.cp_set_tag(3);
+    display.cp_button(320,200,145,60,30,"->",0);
+    // draw a clock (x, y, radius, hours, minutes, seconds, ms, [options])
+    display.cp_clock(430, 50, 20, 12, 35, 15, 10, OPT_FLAT);
+    // draw a gauge (x, y, radius, major divs, minor divs, value, range, [options]
+    display.cp_gauge(430, 140, 20, 10, 5, 68, 100, OPT_FLAT);
+    // draw!
+    display.cp_swap();
 }
 
 /* AGENT CALLBACKS -----------------------------------------------------------*/
@@ -1325,8 +1445,8 @@ pd_l_pin <- hardware.pin2;
 pd_l_pin.configure(DIGITAL_OUT);
 pd_l_pin.write(0);
 
+// int pin gets configured inside the class
 int_pin <- hardware.pin5;
-int_pin.configure(DIGITAL_IN, disp_int_handler);
 
 // Configure SPI @ 4Mhz
 spi <- hardware.spi189;
@@ -1342,44 +1462,20 @@ display.power_down(function() {
         display.init();
         display.config();
         server.log("Powered Up");
-        display.cp_clear_to(0,0,0);
+        // Do a little more configuration
+        // enable touch interrupts (all sources enabled by default)
+        display.gpu_write_mem8(REG_INT_EN, 0x01);
+        // enable interrupts on touch events only
+        display.gpu_write_mem8(REG_INT_MASK, 0x02);
         // Doing development on my desk with display upside-down.
         display.set_rotation(1);
-        
-        // clear the color, stencil, and tag buffers
         display.cp_clear_cst(1,1,1);
-        // draw a gradient in the background (x0, y0, r0, g0, b0, x1, y1, r1, g1, b1)
-        display.cp_gradient(0,0,0,0,0,480,272,255,255,255);
-        display.cp_fgcolor(20,80,220);
-        display.cp_bgcolor(20,80,220)
-        display.cp_gradcolor(255,255,255);
-        // set color for drawing text (green)
-        display.cp_set_color(0,255,0);
-        // draw a formatted string (x, y, font handle, options, string)
-        display.cp_text(100, 25, 18, OPT_RIGHTX, "ft800:/$ _");
-        // switch text color back to black for the rest of these objects
-        display.cp_set_color(0,0,0);
-        // draw a progress bar (x, y, width, height, value, range, [options])
-        display.cp_progress(15,45,250,10,33,100,0);
-        // draw a scroll bar (x, y, width, height, value, range, size, [options])
-        display.cp_scroll(15,60,250,10,45,100,10,0);
-        // draw a slider bar (x, y, width, height, value, range, [options])
-        display.cp_slider(15,75,250,10,20,100,0);
-        // draw a rotary dial (x, y, radius, value, [options])
-        display.cp_dial(340, 50, 20, 0x8000, 0);
-        // draw a toggle switch (x, y, width, font, state, labeltrue, labelfalse, [options])
-        display.cp_toggle(20, 100, 30, 21, 1, "ON", "OFF", 0);
-        // draw a row of keys (x, y, width, height, font handle, labels, [options]);
-        display.cp_keys(10,135,316,60,30,"12345",0);
-        // draw buttons (x, y, width, height, font handle, label, [options])
-        display.cp_button(10,200,145,60,30,"<-",0);
-        display.cp_button(165,200,145,60,30,"Start",0);
-        display.cp_button(320,200,145,60,30,"->",0);
-        // draw a clock (x, y, radius, hours, minutes, seconds, ms, [options])
-        display.cp_clock(430, 50, 20, 12, 35, 15, 10, OPT_FLAT);
-        // draw a gauge (x, y, radius, major divs, minor divs, value, range, [options]
-        display.cp_gauge(430, 140, 20, 10, 5, 68, 100, OPT_FLAT);
-        // draw!
+        display.cp_text(FT_DispWidth/2, 40, 28, OPT_CENTER, "Please tap the dots to calibrate.");
+        display.cp_spinner(FT_DispWidth/2,FT_DispHeight/2,3,0);
+        //display.cp_set_tag(1, calibrate);
+        //display.cp_point(FT_DispWidth/2,FT_DispHeight/2,20);
         display.cp_swap();
+        server.log("Done drawing Intro Screen.");
+        imp.wakeup(2, calibrate);
     });
 });
