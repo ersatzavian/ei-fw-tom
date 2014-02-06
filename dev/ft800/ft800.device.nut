@@ -123,11 +123,10 @@ const EDGE_STRIP_A         = 7;
 const EDGE_STRIP_B         = 8;
 const EDGE_STRIP_L         = 6;
 const EDGE_STRIP_R         = 5;
-const END                  = 0x0000000;
+const END                  = 0;
 const EQUAL                = 5;
 const GEQUAL               = 4;
 const GREATER              = 3;
-const HANDLE               = 0x5000000;
 const INCR                 = 3;
 const INCR_WRAP            = 6;
 const INT_CMDEMPTY         = 32;
@@ -233,7 +232,6 @@ const REPLACE              = 2;
 const RGB332               = 4;
 const RGB565               = 7;
 const SRC_ALPHA            = 2;
-const TAG                  = 0x3000000;
 const TEXT8X8              = 9;
 const TEXTVGA              = 10;
 const TOUCHMODE_CONTINUOUS = 3;
@@ -295,8 +293,17 @@ class ft800 {
         local int_byte = gpu_read_mem(REG_INT_FLAGS, 1);
         //server.log(format("REG_INT_FLAGS: 0x%02x", int_byte[0]));
         if (int_byte && 0x02) {
-            local touch_tag = gpu_read_mem(REG_TAG, 1);
-            server.log(format("Detected touch on tag %d", touch_tag[0]));
+            local touch_tag = gpu_read_mem(REG_TOUCH_TAG, 4);
+            server.log(format("REG_TOUCH_TAG: 0x%02x %02x %02x %02x", touch_tag[0],touch_tag[1],touch_tag[2],touch_tag[3]));
+            local tag_val = gpu_read_mem(REG_TAG, 4);
+            server.log(format("REG_TAG: 0x%02x %02x %02x %02x", tag_val[0],tag_val[1],tag_val[2],tag_val[3]));
+            local touch_raw = gpu_read_mem(REG_TOUCH_RAW_XY, 4);
+            server.log(format("REG_TOUCH_RAW_XY: 0x%02x %02x %02x %02x", touch_raw[0],touch_raw[1],touch_raw[2],touch_raw[3]));
+            local touch_x = gpu_read_mem(REG_TAG_X, 4);
+            server.log(format("REG_TAG_X: 0x%02x %02x %02x %02x", touch_x[0],touch_x[1],touch_x[2],touch_x[3]));
+            local touch_y = gpu_read_mem(REG_TAG_Y, 4);
+            server.log(format("REG_TAG_Y: 0x%02x %02x %02x %02x", touch_y[0],touch_y[1],touch_y[2],touch_y[3]));
+            //server.log(format("Detected touch on tag %d", touch_tag[3]));
             if (tag_callbacks[touch_tag[0]]) {
                 server.log(format("Executing Touch callback for tag %d", touch_tag[0]));
                 tag_callbacks[touch_tag[0]]();
@@ -317,61 +324,64 @@ class ft800 {
     }
     
     function clear_color_rgb(red,green,blue) {
-        return (2<<24)|(((red)&255)<<16)|(((green)&255)<<8)|(((blue)&255)<<0);
+        return (0x02<<24)|((red & 0xff)<<16)|((green & 0xff)<<8)|(blue & 0xff);
     }
     function color_rgb(red,green,blue) {
-        return (4<<24)|(((red)&255)<<16)|(((green)&255)<<8)|(((blue)&255)<<0);
+        return (0x04<<24)|((red & 0xff)<<16)|((green & 0xff)<<8)|(blue & 0xff);
     }
     function color_a(alpha) {
-        return (16<<24)|(((alpha)&255)<<0);
+        return (0x10<<24)|(alpha & 0xff);
     }
     function clear_cst(c, s, t) {
-        return (38<<24)|(((c)&1)<<2)|(((s)&1)<<1)|(((t)&1)<<0);
+        return (0x26<<24)|((c & 0x01) << 2)|((s & 0x01) << 1)|(t & 0x01);
     }
     function line_width(width) {
-        return (14<<24)|(((width)&4095)<<0);
+        return (0x0e<<24)|(width & 0x0fff);
     }
     function begin(prim) {
-        return (31<<24)|((prim & 15)<<0);
+        return (0x1f<<24)|(prim & 0x0f);
     }
     function bitmaphandle(handle) {
-        return (5<<24)|((handle & 15)<<0);
+        return (0x05<<24)|(handle & 0x0f);
     }
     function touchtag(tag) {
-        return (3<<24)|((tag & 15));
+        return (0x03<<24)|(tag & 0xff);
+    }
+    function tagmask(state) {
+        return (0x14<<24)|(state & 0x01);
     }
     function vertex2f(x, y) {
-        return (1<<30)|(((x)&32767)<<15)|(((y)&32767)<<0);
+        return (0x01<<30)|((x & 0x7fff) << 15)|(y & 0x7fff);
     }
     function vertex2ii(x, y, handle=0, cell=0) {
-        return (2<<30)|(((x)&511)<<21)|(((y)&511)<<12)|(((handle)&31)<<7)|(((cell)&127)<<0);
+        return (0x02<<30)|((x & 0x01ff) << 21)|((y & 0x01ff) << 12)|((handle & 0x1f) << 7)|(cell & 0x7f);
     }
     function point_size(size) {
-        return (13<<24)|(((size)&8191)<<0);
+        return (0x0d<<24)|(size & 0x1fff);
     }
     function scissor_xy(x, y) {
-        return ((27<<24)|(((x)&511)<<9) | (((y)&511)<<0));
+        return (0x1b<<24)|((x & 0x01ff) << 9)|(y & 0x01ff);
     }
     function scissor_size(width, height) {
-        return ((28<<24)|(((width)&1023)<<10)|(((height)&1023)<<0));
+        return (0x1c<<24)|((width & 0x03ff) << 10)|(height & 0x03ff);
     }
     function bitmap_source(addr) {
-        return (1<<24)|(((addr)&1048575)<<0);
+        return (0x01<<24)|(addr & 0x0fffff);
     }
     function bitmap_layout(format, linestride, height) {
-        return (7<<24)|(((format)&31)<<19)|(((linestride)&1023)<<9)|(((height)&511)<<0);
+        return (0x07<<24)|((format & 0x1f) << 19)|((linestride & 0x03ff) << 9)|(height & 0x01ff);
     }
     function bitmap_size(filter, wrapx, wrapy, width, height) {
-        return (8<<24)|(((filter)&1)<<20)|(((wrapx)&1)<<19)|(((wrapy)&1)<<18)|(((width)&511)<<9)|(((height)&511)<<0);
+        return (0x08<<24)|((filter & 0x01) << 20)|((wrapx & 0x01) << 19)|((wrapy & 0x01) << 18)|((width & 0x01ff) << 9)|(height & 0x01ff);
     }
     function bitmap_transform_a(a) {
-        return (21<<24)|(((a)&131071)<<0);
+        return (0x15<<24)|(a & 0x01ffff);
     }
     function bitmap_transform_e(e) {
-        return (25<<24)|(((e)&131071)<<0);
+        return (0x19<<24)|(e & 0x01ffff);
     }
     function blend_func(src, dst) {
-        return (11<<24)|(((src)&7)<<3)|(((dst)&7)<<0);
+        return (0x0b<<24)|((src & 0x07) << 3)|(dst & 0x07);
     }
 
     function gpu_host_cmd(cmd) {
@@ -646,16 +656,18 @@ class ft800 {
     }
     
     /* Run the touch screen calibration command to align the touch coordinates.
+     * Input:
+     *      timeout: time in seconds to wait (for the user) before timing out the calibration 
+     * Return: (None)
      */
-    function cp_calibrate() {
+    function cp_calibrate(timeout) {
         cp_stream();
         cp_send_cmd(clear_color_rgb(0,0,0));
         cp_send_cmd(clear_cst(1,1,0));
         cp_send_cmd(CMD_CALIBRATE);
         cp_send_cmd(0xffffffff);
         this.cs_l.write(1);
-        // provide a 10-second timeout to complete calibration before returning.
-        cp_getfree(FIFO_SIZE, 10000000);
+        cp_getfree(FIFO_SIZE, timeout * 1000000);
     } 
     
     /* Clear the screen to a specified RGB color through the coprocessor.
@@ -1188,6 +1200,13 @@ class ft800 {
         this.cs_l.write(1);
     }
     
+    function cp_set_tagmask(state) {
+        cp_stream();
+        server.log(format("Tag Mask: 0x%08x",tagmask(state)));
+        cp_send_cmd(tagmask(state));
+        this.cs_l.write(1);
+    }
+    
     /* Set the touch tag for a graphics object.
      * Input: 
      *      tag:    Valid tags are 1-255
@@ -1196,6 +1215,7 @@ class ft800 {
      */
     function cp_set_tag(tag, callback=null) {
         cp_stream();
+        server.log(format("Tag: 0x%08x",touchtag(tag)));
         cp_send_cmd(touchtag(tag));
         this.tag_callbacks[tag] = callback;
         this.cs_l.write(1);
@@ -1227,7 +1247,6 @@ class ft800 {
         cp_send_cmd(bitmaphandle(handle));
         cp_send_cmd(bitmap_source(dest_offset)); // specify the bmp source location
         cp_send_cmd(bitmap_layout(bitmap_header.format, bitmap_header.stride, bitmap_header.height));
-        //gpu_write_ram32(bitmap_layout(ARGB1555, bitmap_header.stride, bitmap_header.height));
         cp_send_cmd(bitmap_size(NEAREST, BORDER, BORDER, bitmap_header.width, bitmap_header.height));
         cp_send_cmd(END);
     
@@ -1349,7 +1368,7 @@ class ft800 {
 function calibrate() {
     server.log("Calibrating Touch Screen.");
     display.cp_cmdstop();
-    display.cp_calibrate();
+    display.cp_calibrate(10);
     server.log("Done Calibrating.");
     example();
 }
@@ -1358,6 +1377,7 @@ function example() {
     display.cp_clear_to(0,0,0);
     // clear the color, stencil, and tag buffers
     display.cp_clear_cst(1,1,1);
+    display.cp_set_tagmask(1);
     // draw a gradient in the background (x0, y0, r0, g0, b0, x1, y1, r1, g1, b1)
     display.cp_gradient(0,0,0,0,0,480,272,255,255,255);
     // set colors for different parts of widgets (r, g, b)
@@ -1383,14 +1403,16 @@ function example() {
     // draw a row of keys (x, y, width, height, font handle, labels, [options]);
     display.cp_keys(10,135,316,60,30,"12345",0);
     // draw buttons (x, y, width, height, font handle, label, [options])
-    display.cp_set_tag(1)
+    display.cp_set_tag(201)
     display.cp_button(10,200,145,60,30,"<-",0);
-    display.cp_set_tag(2);
+    display.cp_set_tag(202);
     display.cp_button(165,200,145,60,30,"Start",0);
-    display.cp_set_tag(3);
+    display.cp_set_tag(203);
     display.cp_button(320,200,145,60,30,"->",0);
+    display.cp_set_tag(204);
     // draw a clock (x, y, radius, hours, minutes, seconds, ms, [options])
     display.cp_clock(430, 50, 20, 12, 35, 15, 10, OPT_FLAT);
+    display.cp_set_tag(205);
     // draw a gauge (x, y, radius, major divs, minor divs, value, range, [options]
     display.cp_gauge(430, 140, 20, 10, 5, 68, 100, OPT_FLAT);
     // draw!
@@ -1475,7 +1497,6 @@ display.power_down(function() {
         //display.cp_set_tag(1, calibrate);
         //display.cp_point(FT_DispWidth/2,FT_DispHeight/2,20);
         display.cp_swap();
-        server.log("Done drawing Intro Screen.");
         imp.wakeup(2, calibrate);
     });
 });
