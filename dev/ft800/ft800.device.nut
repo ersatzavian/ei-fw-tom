@@ -115,6 +115,7 @@ const REG_VSYNC1           = 1057868;
 
 const DECR                 = 4;
 const DECR_WRAP            = 7;
+const DISPLAY              = 0;
 const DLSWAP_DONE          = 0;
 const DLSWAP_FRAME         = 2;
 const DLSWAP_LINE          = 1;
@@ -123,7 +124,7 @@ const EDGE_STRIP_A         = 7;
 const EDGE_STRIP_B         = 8;
 const EDGE_STRIP_L         = 6;
 const EDGE_STRIP_R         = 5;
-const END                  = 0;
+const END                  = 0x210000;
 const EQUAL                = 5;
 const GEQUAL               = 4;
 const GREATER              = 3;
@@ -293,20 +294,29 @@ class ft800 {
         local int_byte = gpu_read_mem(REG_INT_FLAGS, 1);
         //server.log(format("REG_INT_FLAGS: 0x%02x", int_byte[0]));
         if (int_byte && 0x02) {
-            local touch_tag = gpu_read_mem(REG_TOUCH_TAG, 4);
-            server.log(format("REG_TOUCH_TAG: 0x%02x %02x %02x %02x", touch_tag[0],touch_tag[1],touch_tag[2],touch_tag[3]));
-            local tag_val = gpu_read_mem(REG_TAG, 4);
-            server.log(format("REG_TAG: 0x%02x %02x %02x %02x", tag_val[0],tag_val[1],tag_val[2],tag_val[3]));
-            local touch_raw = gpu_read_mem(REG_TOUCH_RAW_XY, 4);
-            server.log(format("REG_TOUCH_RAW_XY: 0x%02x %02x %02x %02x", touch_raw[0],touch_raw[1],touch_raw[2],touch_raw[3]));
-            local touch_x = gpu_read_mem(REG_TAG_X, 4);
-            server.log(format("REG_TAG_X: 0x%02x %02x %02x %02x", touch_x[0],touch_x[1],touch_x[2],touch_x[3]));
-            local touch_y = gpu_read_mem(REG_TAG_Y, 4);
-            server.log(format("REG_TAG_Y: 0x%02x %02x %02x %02x", touch_y[0],touch_y[1],touch_y[2],touch_y[3]));
-            //server.log(format("Detected touch on tag %d", touch_tag[3]));
-            if (tag_callbacks[touch_tag[0]]) {
-                server.log(format("Executing Touch callback for tag %d", touch_tag[0]));
-                tag_callbacks[touch_tag[0]]();
+            // The touch engine takes about 25 ms (measured experimentally :/ to load
+            // the touch coordinates into the tag registers and find the tag.
+            imp.sleep(0.025);
+            local data = gpu_read_mem(REG_TOUCH_RZ, 13);
+            //local result = "0x ";
+            //server.log("Got "+data.len()+" bytes.");
+            //for (local i = (data.len() - 1); i >= 0; i--) {
+            //    result += format("%02x ",data[i]);
+            //}
+            //server.log(result);
+            local touch_pressure = ((data[1] << 8) + data[0]);
+            local touch_y = (data[5] << 8) + data[4];
+            local touch_x = (data[7] << 8) + data[6];
+            local tag_y = (data[9] << 8) + data[8];
+            local tag_x = (data[11] << 8) + data[10];
+            local tag = data[12];
+            
+            //server.log(format("Touch event at (%d, %d), Pressure %d", touch_x, touch_y, touch_pressure));
+            //server.log(format("Tag coordinates (%d, %d) -> Tag = %d", tag_x, tag_y, tag));
+            
+            if (tag_callbacks[tag]) {
+                //server.log(format("Executing Touch callback for tag %d", tag));
+                tag_callbacks[tag]();
             }
         }
     }
@@ -574,7 +584,7 @@ class ft800 {
     function cp_swap() {
         cp_stream();
         cp_send_cmd(CMD_SWAP);
-        cp_send_cmd(END);
+        cp_send_cmd(DISPLAY);
         cp_send_cmd(CMD_DLSTART);
         cp_getfree(4);
         this.cs_l.write(1);
@@ -1182,9 +1192,9 @@ class ft800 {
     function cp_track(x, y, width, height, tag) {
         cp_stream();
         cp_send_cmd(CMD_TRACK);
-        cp_send_cmd(((y << 16) | (x & 0xffff)));
-        cp_send_cmd(((height << 16) | (width & 0xffff)));
-        cp_send_cmd(tag & 0xff);
+        cp_send_cmd((y << 16) | (x & 0xffff));
+        cp_send_cmd((height << 16) | (width & 0xffff));
+        cp_send_cmd(tag & 0xffff);
     }
     
     /* Set the bitmap handle
@@ -1200,9 +1210,15 @@ class ft800 {
         this.cs_l.write(1);
     }
     
+    /* Set the tag mask bit. 
+     * This bit controls whether or not graphics object tags can be set, and defaults to 1.
+     * Input:
+     *      state: 1 to allow tags to be set, 0 to disable tags.
+     * Return: (None)
+     */
     function cp_set_tagmask(state) {
         cp_stream();
-        server.log(format("Tag Mask: 0x%08x",tagmask(state)));
+        //server.log(format("Tag Mask: 0x%08x",tagmask(state)));
         cp_send_cmd(tagmask(state));
         this.cs_l.write(1);
     }
@@ -1373,11 +1389,22 @@ function calibrate() {
     example();
 }
 
+function my_tag_callback() {
+    server.log("hello!");
+}
+
 function example() {
+    display.cp_clear_cst(1,1,1);
+    display.cp_set_tag(201, my_tag_callback);
+    display.cp_point(FT_DispWidth/2,FT_DispHeight/2,100);
+    display.cp_swap();
+    display.cp_getfree(FIFO_SIZE);
+    server.log("Done drawing example screen.");
+    imp.sleep(1);
+    /*
     display.cp_clear_to(0,0,0);
     // clear the color, stencil, and tag buffers
     display.cp_clear_cst(1,1,1);
-    display.cp_set_tagmask(1);
     // draw a gradient in the background (x0, y0, r0, g0, b0, x1, y1, r1, g1, b1)
     display.cp_gradient(0,0,0,0,0,480,272,255,255,255);
     // set colors for different parts of widgets (r, g, b)
@@ -1405,10 +1432,14 @@ function example() {
     // draw buttons (x, y, width, height, font handle, label, [options])
     display.cp_set_tag(201)
     display.cp_button(10,200,145,60,30,"<-",0);
+    // set a tracker for this button (x, y, width, height, tag)
+    //display.cp_track(10, 200, 145, 60, 201);
     display.cp_set_tag(202);
     display.cp_button(165,200,145,60,30,"Start",0);
+    //display.cp_track(165, 200, 145, 60, 202);
     display.cp_set_tag(203);
     display.cp_button(320,200,145,60,30,"->",0);
+    //display.cp_track(320, 200, 145, 60, 203);
     display.cp_set_tag(204);
     // draw a clock (x, y, radius, hours, minutes, seconds, ms, [options])
     display.cp_clock(430, 50, 20, 12, 35, 15, 10, OPT_FLAT);
@@ -1417,6 +1448,7 @@ function example() {
     display.cp_gauge(430, 140, 20, 10, 5, 68, 100, OPT_FLAT);
     // draw!
     display.cp_swap();
+    */
 }
 
 /* AGENT CALLBACKS -----------------------------------------------------------*/
