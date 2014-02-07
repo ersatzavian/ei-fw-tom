@@ -285,39 +285,62 @@ class ft800 {
     pd_l            = null;
     int_l           = null;
     
+    // callback functions assigned to specific tags
     tag_callbacks   = array(256,null);
+    // a general callback to call on any touch
+    any_touch_callback = null;
+    // flag; if set, clear the any_touch_callback when it is called
+    clear_any_touch_callback = null;
     
+    /* General FT800 interrupt handler. This is where touch events are detected */
     function int_handler() {
+        local touch_pressure = 0;
+        local touch_y = 0;
+        local touch_x = 0;
+        local tag_y = 0;
+        local tag_x = 0;
+        local tag = 0;
         // interrupt is active-low
         if (this.int_l.read()) {return;}
-        //server.log("Display Interrupt Received!");
         local int_byte = gpu_read_mem(REG_INT_FLAGS, 1);
-        //server.log(format("REG_INT_FLAGS: 0x%02x", int_byte[0]));
         if (int_byte && 0x02) {
             // The touch engine takes about 25 ms (measured experimentally :/ to load
             // the touch coordinates into the tag registers and find the tag.
             imp.sleep(0.025);
             local data = gpu_read_mem(REG_TOUCH_RZ, 13);
-            //local result = "0x ";
-            //server.log("Got "+data.len()+" bytes.");
-            //for (local i = (data.len() - 1); i >= 0; i--) {
-            //    result += format("%02x ",data[i]);
-            //}
-            //server.log(result);
-            local touch_pressure = ((data[1] << 8) + data[0]);
-            local touch_y = (data[5] << 8) + data[4];
-            local touch_x = (data[7] << 8) + data[6];
-            local tag_y = (data[9] << 8) + data[8];
-            local tag_x = (data[11] << 8) + data[10];
-            local tag = data[12];
-            
-            //server.log(format("Touch event at (%d, %d), Pressure %d", touch_x, touch_y, touch_pressure));
-            //server.log(format("Tag coordinates (%d, %d) -> Tag = %d", tag_x, tag_y, tag));
+            touch_pressure = ((data[1] << 8) + data[0]);
+            touch_y = (data[5] << 8) + data[4];
+            touch_x = (data[7] << 8) + data[6];
+            tag_y = (data[9] << 8) + data[8];
+            tag_x = (data[11] << 8) + data[10];
+            tag = data[12];
             
             if (tag_callbacks[tag]) {
-                //server.log(format("Executing Touch callback for tag %d", tag));
                 tag_callbacks[tag]();
-            }
+            } else if (any_touch_callback && touch_pressure < 0x7fff) {
+                any_touch_callback();
+                if (clear_any_touch_callback) {
+                    any_touch_callback = null;
+                    clear_any_touch_callback = null;
+                }
+            }    
+        }
+        // give a moment for the touch to release (not unlike debouncing a switch!)
+        imp.sleep(0.2);
+    }
+    
+    /* Register a callback that is called on any touch event.
+     * Input:
+     *      callback: function to call
+     *      clear: if true, remove the callback the first time it is called
+     * Return: (None);
+     */
+    function on_any_touch(callback, clear) {
+        this.any_touch_callback = callback;
+        if (clear) {
+            this.clear_any_touch_callback = true;
+        } else {
+            this.clear_any_touch_callback = false;
         }
     }
     
@@ -589,6 +612,24 @@ class ft800 {
         cp_getfree(4);
         this.cs_l.write(1);
     }
+    
+    /* Reset the coprocessor. May be used if the coprocessor reports a fault or stalls
+     * Input: (None)
+     * Return: (None)
+     */
+    function cp_reset() {
+        cp_ptr = 0;
+        freespace = FIFO_SIZE;
+        // put the coprocessor into reset
+        gpu_write_mem8(REG_CPURESET, 1);
+        // reset the command pointers
+        gpu_write_mem16(REG_CMD_WRITE, cp_ptr);
+        gpu_write_mem16(REG_CMD_READ, cp_ptr);
+        // release the coprocessor from reset
+        gpu_write_mem8(REG_CPURESET, 0);
+        // start a new display list
+        cp_start();
+    }
 
     /* Get the current position of the coprocessor's read pointer in the command 
      * FIFO. This is used to determine the amount of free space in the FIFO and 
@@ -609,8 +650,11 @@ class ft800 {
     
     /* Set the command write pointer and wait for the coprocessor to process all or
      * part of the coprocessor command FIFO. 
+     * Input: 
+     *      n: minimum free space to see in the command FIFO before returning
+     *      timeout: (optional) time in ms to wait before timing out operation 
      */ 
-    function cp_getfree(n, timeout = 250000) {
+    function cp_getfree(n, timeout = 250) {
         // Wrap around at the command FIFO boundary
         cp_ptr = cp_ptr & 0xfff;
         // End the current SPI Transaction
@@ -624,20 +668,22 @@ class ft800 {
         local fullness = 0;
         local start = hardware.micros();
         do {
-            // TO-DO: if coprocessor writes "0xFFF" to REG_CMD_READ, it has had a fault.
-            // reset the coprocessor in this case.
+            // If coprocessor writes "0xFFF" to REG_CMD_READ, it has had a fault.
             local rdptr = cp_rdptr();
             if (rdptr == 0xfff) {
                 server.error(format("Coprocessor reported fault, cp_ptr at 0x%04x",cp_ptr));
+                cp_reset();
                 return 1;
             }
             fullness = (cp_ptr - rdptr) & (FIFO_SIZE - 1);
             freespace = FIFO_SIZE - fullness;
-            if ((hardware.micros() - start) > timeout) {
+            if ((hardware.micros() - start) > (timeout * 1000)) {
                 server.error("Timed out waiting for Coprocessor");
+                cp_reset();
                 return 1;
             }
         } while (freespace < n);
+        return 0;
     }
     
     /* Write general commands to the coprocessor command FIFO.
@@ -668,7 +714,9 @@ class ft800 {
     /* Run the touch screen calibration command to align the touch coordinates.
      * Input:
      *      timeout: time in seconds to wait (for the user) before timing out the calibration 
-     * Return: (None)
+     * Return:
+     *      1 if operation times out
+     *      0 on successful completion
      */
     function cp_calibrate(timeout) {
         cp_stream();
@@ -677,7 +725,11 @@ class ft800 {
         cp_send_cmd(CMD_CALIBRATE);
         cp_send_cmd(0xffffffff);
         this.cs_l.write(1);
-        cp_getfree(FIFO_SIZE, timeout * 1000000);
+        if (cp_getfree(FIFO_SIZE, timeout * 1000)) {
+            return 1;
+        } else {
+            return 0;
+        }
     } 
     
     /* Clear the screen to a specified RGB color through the coprocessor.
@@ -706,6 +758,18 @@ class ft800 {
     function cp_set_color(r,g,b) {
         cp_stream();
         cp_send_cmd(color_rgb(r,g,b));
+        this.cs_l.write(1);
+    }
+    
+    /* Set the alpha value for the current color
+     * How alpha is used depends on BLEND_FUNC; default is a transparent blend
+     * Input: 
+     *      alpha: 0-255
+     * Return: (None)
+     */
+    function cp_set_alpha(alpha) {
+        cp_stream();
+        cp_send_cmd(color_a(alpha));
         this.cs_l.write(1);
     }
     
@@ -1120,7 +1184,7 @@ class ft800 {
      * appropriate display list, the command will shift the bitmap around the screen
      * without any additional work with the MCU.
      * 
-     * Send CMD_STOP with cp_cmdstop() to halt the screensaver.
+     * Send CMD_STOP with cp_stop() to halt the screensaver.
      *
      * Input: (None)
      * Return: (None)
@@ -1152,7 +1216,7 @@ class ft800 {
      * Input: (None)
      * Return: (None)
      */
-    function cp_cmdstop() {
+    function cp_stop() {
         cp_stream();
         cp_send_cmd(CMD_STOP);
         this.cs_l.write(1);
@@ -1231,7 +1295,7 @@ class ft800 {
      */
     function cp_set_tag(tag, callback=null) {
         cp_stream();
-        server.log(format("Tag: 0x%08x",touchtag(tag)));
+        //server.log(format("Tag: 0x%08x",touchtag(tag)));
         cp_send_cmd(touchtag(tag));
         this.tag_callbacks[tag] = callback;
         this.cs_l.write(1);
@@ -1383,25 +1447,30 @@ class ft800 {
 
 function calibrate() {
     server.log("Calibrating Touch Screen.");
-    display.cp_cmdstop();
-    display.cp_calibrate(10);
-    server.log("Done Calibrating.");
-    example();
+    display.cp_stop();
+    if (display.cp_calibrate(10)) {
+        server.log("Calibration timed out!");
+        display.cp_stop();
+        display.cp_getfree(4);
+    } else {
+        server.log("Done Calibrating.");
+    }
+    example_dot();
 }
 
-function my_tag_callback() {
-    server.log("hello!");
-}
-
-function example() {
+function example_dot() {
     display.cp_clear_cst(1,1,1);
-    display.cp_set_tag(201, my_tag_callback);
+    // change the dot color every time we draw this frame
+    local r = math.rand() % 255;
+    local g = math.rand() % 255;
+    local b = math.rand() % 255;
+    display.cp_set_color(r,g,b);
+    display.cp_set_tag(201, example_dot);
     display.cp_point(FT_DispWidth/2,FT_DispHeight/2,100);
     display.cp_swap();
-    display.cp_getfree(FIFO_SIZE);
-    server.log("Done drawing example screen.");
-    imp.sleep(1);
-    /*
+}
+
+function example_widgets() {
     display.cp_clear_to(0,0,0);
     // clear the color, stencil, and tag buffers
     display.cp_clear_cst(1,1,1);
@@ -1432,23 +1501,17 @@ function example() {
     // draw buttons (x, y, width, height, font handle, label, [options])
     display.cp_set_tag(201)
     display.cp_button(10,200,145,60,30,"<-",0);
-    // set a tracker for this button (x, y, width, height, tag)
-    //display.cp_track(10, 200, 145, 60, 201);
     display.cp_set_tag(202);
     display.cp_button(165,200,145,60,30,"Start",0);
-    //display.cp_track(165, 200, 145, 60, 202);
     display.cp_set_tag(203);
     display.cp_button(320,200,145,60,30,"->",0);
-    //display.cp_track(320, 200, 145, 60, 203);
     display.cp_set_tag(204);
     // draw a clock (x, y, radius, hours, minutes, seconds, ms, [options])
     display.cp_clock(430, 50, 20, 12, 35, 15, 10, OPT_FLAT);
     display.cp_set_tag(205);
     // draw a gauge (x, y, radius, major divs, minor divs, value, range, [options]
     display.cp_gauge(430, 140, 20, 10, 5, 68, 100, OPT_FLAT);
-    // draw!
     display.cp_swap();
-    */
 }
 
 /* AGENT CALLBACKS -----------------------------------------------------------*/
@@ -1526,9 +1589,8 @@ display.power_down(function() {
         display.cp_clear_cst(1,1,1);
         display.cp_text(FT_DispWidth/2, 40, 28, OPT_CENTER, "Please tap the dots to calibrate.");
         display.cp_spinner(FT_DispWidth/2,FT_DispHeight/2,3,0);
-        //display.cp_set_tag(1, calibrate);
-        //display.cp_point(FT_DispWidth/2,FT_DispHeight/2,20);
         display.cp_swap();
-        imp.wakeup(2, calibrate);
+        // start calibration on any touch, and clear this callback as soon as it's called.
+        display.on_any_touch(calibrate,1);
     });
 });
