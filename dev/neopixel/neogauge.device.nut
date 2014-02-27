@@ -130,13 +130,6 @@ class neoDial extends neoPixels {
     }
     
     function drawDial(emphasisname = null, emphasisfactor = null) {
-        // if one optional argument was provided, make sure they both were
-        if (emphasisname) {
-            if (!emphasisfactor) {
-                emphasisfactor = 1;
-            }
-        }
-        
         for (local i = 0; i < dialvalues.len(); i++) {
             dialvalues[i] = [0,0,0];
         }
@@ -220,8 +213,12 @@ dial <- neoDial(spi, NUMPIXELS);
 
 forceClear();
 
-dial.setLevel("new",0.2);
+dial.setLevel("dial1",0.2);
 
 imp.wakeup(1, function() {
     dial.setLevel("dial2", 0.5);
+    
+    imp.wakeup(1, function() {
+        dial.remove("dial1");
+    });
 });
