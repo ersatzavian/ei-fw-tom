@@ -62,6 +62,9 @@ class neoPixels {
     // color is an array of the form [r, g, b]
     function writePixel(p, color) {
         frame.seek(p*BYTESPERPIXEL);
+        if (color[0] > 255) { color[0] = 255; }
+        if (color[1] > 255) { color[1] = 255; }
+        if (color[2] > 255) { color[2] = 255; }
         local r = color[0] * BYTESPERCOLOR;
         local g = color[1] * BYTESPERCOLOR;
         local b = color[2] * BYTESPERCOLOR;
@@ -100,42 +103,72 @@ class neoPixels {
 
 class neoDial extends neoPixels {
     
-    BASEBRIGHTNESS = 16;
+    basebrightness = 16;
+    dialvalues = [];
     gauges = {}
     
     constructor(_spi, _frameSize) {
         base.constructor(_spi, _frameSize);
+        dialvalues = array(_frameSize);
+        clearDial();
     }
     
+    function clearDial() {
+        for (local i = 0; i < dialvalues.len(); i++) {
+            dialvalues[i] = [0,0,0];
+        }
+        drawDial();
+    }
+
+    
     function newcolor() {
-        local r = math.rand() % BASEBRIGHTNESS;
-        local g = math.rand() % BASEBRIGHTNESS;
-        local b = math.rand() % BASEBRIGHTNESS;
+        local r = math.rand() % basebrightness;
+        local g = math.rand() % basebrightness;
+        local b = math.rand() % basebrightness;
         //server.log(format("new color: %d,%d,%d",r,g,b));
         return [r,g,b];
     }
     
-    function drawGaugeOnce(name, factor) {
+    function drawDial(emphasisname = null, emphasisfactor = null) {
+        // if one optional argument was provided, make sure they both were
+        if (emphasisname) {
+            if (!emphasisfactor) {
+                emphasisfactor = 1;
+            }
+        }
+        
+        for (local i = 0; i < dialvalues.len(); i++) {
+            dialvalues[i] = [0,0,0];
+        }
         clearFrame();
-        local threshold = gauges[name].level * this.frameSize;
-        local r = gauges[name].color[0] * factor;
-        local g = gauges[name].color[1] * factor;
-        local b = gauges[name].color[2] * factor;
-        //server.log(format("%d,%d,%d",r,g,b));
-        for (local i = 0; i < threshold; i++) {
-            writePixel(i, [r,g,b]);
+        local factor = 1;
+        // for each pixel, add up all of the gauges that are using it
+        for (local pixel = 0; pixel < dialvalues.len(); pixel++) {
+            foreach (gaugename, gauge in gauges) {
+                if (gaugename == emphasisname) {
+                    factor = emphasisfactor;
+                } else {
+                    factor = 1;
+                }
+                if (pixel < (gauge.level * this.frameSize)) {
+                    dialvalues[pixel][0] += (gauge.color[0] * factor);
+                    dialvalues[pixel][1] += (gauge.color[1] * factor);
+                    dialvalues[pixel][2] += (gauge.color[2] * factor);
+                }
+            }
+            writePixel(pixel, dialvalues[pixel]);
         }
         writeFrame();
     }
     
     function fade(name, start, end) {
-        for (local i = start; i < 16; i++) {
-            drawGaugeOnce(name, i);
+        for (local i = start; i < basebrightness; i++) {
+            drawDial(name, i);
             imp.sleep(0.025);
         }
         imp.sleep(0.65);
-        for (local i = 15; i >= end; i--) {
-            drawGaugeOnce(name, i);
+        for (local i = basebrightness-1; i >= end; i--) {
+            drawDial(name, i);
             imp.sleep(0.025);
         }
     }
@@ -162,6 +195,7 @@ class neoDial extends neoPixels {
     }
 }
 
+/* For prototyping with a panel larger than the target panel; clear pixels beyond our known range*/
 function forceClear() {
     local data = blob(64*27 + 1);
     for (local p = 0; p < 64; p++) data.writestring(clearString);
@@ -189,5 +223,5 @@ forceClear();
 dial.setLevel("new",0.2);
 
 imp.wakeup(1, function() {
-    dial.remove("new");
+    dial.setLevel("dial2", 0.5);
 });
