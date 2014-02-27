@@ -62,8 +62,6 @@ class neoPixels {
     // color is an array of the form [r, g, b]
     function writePixel(p, color) {
         frame.seek(p*BYTESPERPIXEL);
-        local i = 0;
-        
         local r = color[0] * BYTESPERCOLOR;
         local g = color[1] * BYTESPERCOLOR;
         local b = color[2] * BYTESPERCOLOR;
@@ -72,11 +70,25 @@ class neoPixels {
         frame.writestring(bits.slice(b, b+BYTESPERCOLOR));    
     }
     
-    // clears the frame buffer
+    // Clears the frame buffer (with an optional color)
     // but does not write it to the pixel strip
-    function clearFrame() {
-      for (local p = 0; p < frameSize; p++) frame.writestring(clearString);
-      frame.writen(0x00,'c');
+    // color is an array of the form [r, g, b]
+    function clearFrame(color = null) {
+        local colorString = clearString;
+        if (color) {
+            // Get the color string
+            colorString = blob(BYTESPERPIXEL);
+            local r = color[0] * BYTESPERCOLOR;
+            local g = color[1] * BYTESPERCOLOR;
+            local b = color[2] * BYTESPERCOLOR;
+            colorString.writestring(bits.slice(g, g+BYTESPERCOLOR));
+            colorString.writestring(bits.slice(r, r+BYTESPERCOLOR));
+            colorString.writestring(bits.slice(b, b+BYTESPERCOLOR));
+        }        
+
+        frame.seek(0);
+        for (local p = 0; p < frameSize; p++) frame.writestring(colorString.tostring());
+        frame.writen(0x00,'c');
     }
     
     // writes the frame buffer to the pixel strip
@@ -86,75 +98,68 @@ class neoPixels {
     }
 }
 
-class neoGauge extends neoPixels {
+class neoDial extends neoPixels {
     
-    level = 0;
-    typBrightness = 2;
-    nowBrightness = 0;
-    fadeSteps = 100;
+    BASEBRIGHTNESS = 16;
+    gauges = {}
     
     constructor(_spi, _frameSize) {
         base.constructor(_spi, _frameSize);
     }
     
-    function setLevel(value, brightness = 10) {
-        level = value;
-        nowBrightness = brightness;
+    function newcolor() {
+        local r = math.rand() % BASEBRIGHTNESS;
+        local g = math.rand() % BASEBRIGHTNESS;
+        local b = math.rand() % BASEBRIGHTNESS;
+        //server.log(format("new color: %d,%d,%d",r,g,b));
+        return [r,g,b];
+    }
+    
+    function drawGaugeOnce(name, factor) {
         clearFrame();
-        local threshold = level * this.frameSize;
+        local threshold = gauges[name].level * this.frameSize;
+        local r = gauges[name].color[0] * factor;
+        local g = gauges[name].color[1] * factor;
+        local b = gauges[name].color[2] * factor;
+        //server.log(format("%d,%d,%d",r,g,b));
         for (local i = 0; i < threshold; i++) {
-            writePixel(i, [0,0,brightness]);
+            writePixel(i, [r,g,b]);
         }
-        server.log("brightness = "+brightness);
         writeFrame();
     }
     
-    function setBrightness(value) {
-        value = math.floor(value * 255);
-        if (value < 0) {value = 0}
-        if (value > 255) {value = 255}
-        typBrightness = value;
-        if (typBrightness < nowBrightness) {
-            fadeDownTo(typBrightness);
-        } else if (typBrightness > nowBrightness) {
-            fadeUpTo(typBrightness);
+    function fade(name, start, end) {
+        for (local i = start; i < 16; i++) {
+            drawGaugeOnce(name, i);
+            imp.sleep(0.025);
+        }
+        imp.sleep(0.65);
+        for (local i = 15; i >= end; i--) {
+            drawGaugeOnce(name, i);
+            imp.sleep(0.025);
         }
     }
     
-    function fadeDownTo(value) {
-        server.log("fading down to "+value);
-        local step = (nowBrightness - value) / fadeSteps;
-        server.log("step: "+step);
-        for (local i = 0; i < fadeSteps; i++) {
-            setLevel(level, math.floor(nowBrightness - step));
-            imp.sleep(0.01);
-        }
-        server.log("Done.");
-    }
-    
-    function fadeUpTo(value) {
-        server.log("fading up to "+value);
-        local step = (value - nowBrightness) / fadeSteps;
-        server.log("step: "+step);
-        for (local i = 0; i < fadeSteps; i++) {
-            setLevel(level, math.floor(nowBrightness + step));
-            imp.sleep(0.01)
-        }
-        server.log("done.");
-    }
-    
-    function setLevelPulse(value) {
-        setLevel(value, 1);
-        fadeUpTo(255);
-        imp.wakeup(1, function(){
-            fadeDownTo(typBrightness);
-        }.bindenv(this));
-    }
-    
-    function pulseLeader() {
+    function setLevel(name, newlevel) {
+        if (newlevel > 1) {newlevel = 1};
+        if (newlevel < 0) {newlevel = 0};
         
+        if (name in gauges) {
+            gauges[name].level = newlevel;
+        } else {
+            gauges[name] <- {};
+            gauges[name].color <- this.newcolor();
+            gauges[name].level <- newlevel;
+        }
+        
+        this.fade(name,0,1);
     }
     
+    function remove(name) {
+        if (!(name in gauges)) { return; }
+        this.fade(name,1,0);
+        gauges[name] = null;
+    }
 }
 
 function forceClear() {
@@ -163,12 +168,10 @@ function forceClear() {
     data.writen(0x00,'c');
     spi.write(data);
 }
+
 /* AGENT CALLBACKS -----------------------------------------------------------*/
 
 agent.on("set", function(level) {
-    if (level > 1) {level = 1};
-    if (level < 0) {level = 0};
-    
     gauge.setlevel(level);
 });
 
@@ -179,8 +182,12 @@ const NUMPIXELS = 8;
 
 spi <- hardware.spi257;
 spi.configure(MSB_FIRST, SPICLK);
-gauge <- neoGauge(spi, NUMPIXELS);
+dial <- neoDial(spi, NUMPIXELS);
 
 forceClear();
 
-gauge.setLevelPulse(0.75);
+dial.setLevel("new",0.2);
+
+imp.wakeup(1, function() {
+    dial.remove("new");
+});
