@@ -144,7 +144,7 @@ class neoDial extends neoPixels {
         foreach (gaugename, gauge in gauges) {
             local markerpixel = gauge.level * this.frameSize;
             if (gaugename == emphasisname) {
-                for (local pixel = 0; pixel < markerpixel; pixel++) {
+                for (local pixel = 0; pixel <= markerpixel; pixel++) {
                     dialvalues[pixel][0] += (gauge.color[0] * emphasisfactor);
                     dialvalues[pixel][1] += (gauge.color[1] * emphasisfactor);
                     dialvalues[pixel][2] += (gauge.color[2] * emphasisfactor);
@@ -208,8 +208,12 @@ function forceClear() {
 
 /* AGENT CALLBACKS -----------------------------------------------------------*/
 
-agent.on("set", function(level) {
-    gauge.setlevel(level);
+agent.on("set", function(val) {
+    dial.setlevel(val.name, val.level);
+});
+
+agent.on("remove", function(gaugename) {
+    dial.remove(gaugename);
 });
 
 /* RUNTIME BEGINS HERE -------------------------------------------------------*/
@@ -229,5 +233,14 @@ imp.wakeup(1, function() {
     dial.setLevel("pkg2", 0.7);
     imp.wakeup(2, function() {
         dial.remove("pkg1");
+        imp.wakeup(1, function() {
+            dial.setLevel("pkg2", 0.3);
+            imp.wakeup(1, function() {
+                dial.setLevel("pkg1", 0.5);
+                imp.wakeup(1, function() {
+                    dial.setLevel("pkg1", 0.8);
+                });
+            });
+        });
     });
 });
