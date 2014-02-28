@@ -104,6 +104,14 @@ class neoPixels {
 class neoDial extends neoPixels {
     
     basebrightness = 16;
+    gaugecolors = [
+        [15, 0, 0],
+        [0, 15, 0],
+        [0, 0, 15],
+        [8, 7, 0],
+        [0, 8, 7], 
+        [7, 0, 8]];
+    newcoloridx = 0
     dialvalues = [];
     gauges = {}
     
@@ -122,11 +130,9 @@ class neoDial extends neoPixels {
 
     
     function newcolor() {
-        local r = math.rand() % basebrightness;
-        local g = math.rand() % basebrightness;
-        local b = math.rand() % basebrightness;
-        //server.log(format("new color: %d,%d,%d",r,g,b));
-        return [r,g,b];
+        local color = gaugecolors[newcoloridx++];
+        if (newcoloridx >= gaugecolors.len()) {newcoloridx = 0};
+        return color;
     }
     
     function drawDial(emphasisname = null, emphasisfactor = null) {
@@ -134,23 +140,26 @@ class neoDial extends neoPixels {
             dialvalues[i] = [0,0,0];
         }
         clearFrame();
-        local factor = 1;
-        // for each pixel, add up all of the gauges that are using it
-        for (local pixel = 0; pixel < dialvalues.len(); pixel++) {
-            foreach (gaugename, gauge in gauges) {
-                if (gaugename == emphasisname) {
-                    factor = emphasisfactor;
-                } else {
-                    factor = 1;
+        // during a fade animation, emphasize one gauge over all the other markers
+        foreach (gaugename, gauge in gauges) {
+            local markerpixel = gauge.level * this.frameSize;
+            if (gaugename == emphasisname) {
+                for (local pixel = 0; pixel < markerpixel; pixel++) {
+                    dialvalues[pixel][0] += (gauge.color[0] * emphasisfactor);
+                    dialvalues[pixel][1] += (gauge.color[1] * emphasisfactor);
+                    dialvalues[pixel][2] += (gauge.color[2] * emphasisfactor);
                 }
-                if (pixel < (gauge.level * this.frameSize)) {
-                    dialvalues[pixel][0] += (gauge.color[0] * factor);
-                    dialvalues[pixel][1] += (gauge.color[1] * factor);
-                    dialvalues[pixel][2] += (gauge.color[2] * factor);
-                }
+            } else {
+                dialvalues[markerpixel][0] += gauge.color[0];
+                dialvalues[markerpixel][1] += gauge.color[1];
+                dialvalues[markerpixel][2] += gauge.color[2];
             }
+        }
+        
+        for (local pixel = 0; pixel < dialvalues.len(); pixel++) {
             writePixel(pixel, dialvalues[pixel]);
         }
+        
         writeFrame();
     }
     
@@ -179,12 +188,13 @@ class neoDial extends neoPixels {
         }
         
         this.fade(name,0,1);
+        this.drawDial();
     }
     
     function remove(name) {
         if (!(name in gauges)) { return; }
         this.fade(name,1,0);
-        gauges[name] = null;
+        delete gauges[name];
     }
 }
 
@@ -205,7 +215,7 @@ agent.on("set", function(level) {
 /* RUNTIME BEGINS HERE -------------------------------------------------------*/
 
 // The number of pixels in your chain
-const NUMPIXELS = 8;
+const NUMPIXELS = 12;
 
 spi <- hardware.spi257;
 spi.configure(MSB_FIRST, SPICLK);
@@ -213,12 +223,11 @@ dial <- neoDial(spi, NUMPIXELS);
 
 forceClear();
 
-dial.setLevel("dial1",0.2);
+dial.setLevel("pkg1", 0.2);
 
 imp.wakeup(1, function() {
-    dial.setLevel("dial2", 0.5);
-    
-    imp.wakeup(1, function() {
-        dial.remove("dial1");
+    dial.setLevel("pkg2", 0.7);
+    imp.wakeup(2, function() {
+        dial.remove("pkg1");
     });
 });
