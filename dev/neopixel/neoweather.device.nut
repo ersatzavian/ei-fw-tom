@@ -350,7 +350,7 @@ class neoWeather extends neoPixels {
     YELLOW  = [8,8,0];
     CYAN    = [0,8,8];
     MAGENTA = [8,0,8];
-    WHITE   = [8,8,8];
+    WHITE   = [7,8,8];
     
     pixelvalues = [];
     wakehandle = 0;
@@ -360,14 +360,6 @@ class neoWeather extends neoPixels {
         pixelvalues = [];
         for (local x = 0; x < _frameSize; x++) { pixelvalues.push([0,0,0]); }
     }
-    
-    function draw() {
-        clearFrame();
-        for (local pixel = 0; pixel < frameSize; pixel++) {
-            writePixel(pixel, pixelvalues[pixel]);
-        }
-        writeFrame();
-    }
 
     function none() {
         // cancel any previous effect currently running
@@ -376,6 +368,10 @@ class neoWeather extends neoPixels {
         draw();
     }
     
+    /* Blue and Purple fading dots effect.
+     * Factor is 1 to 1000 and changes the number of new "raindrops" per refresh;
+     * (factor / 1000) blank pixels will get a new drop on a refresh.
+     */
     function rain(factor) {
         //local tick = hardware.micros();
         // cancel any previous effect currently running
@@ -416,9 +412,42 @@ class neoWeather extends neoPixels {
         //server.log(format("Refreshed Effect in %d us",(tock-tick)));
     }
     
+    /* White fading dots effect.
+     * Factor is 1 to 1000 and changes the number of new "raindrops" per refresh;
+     * (factor / 1000) blank pixels will get a new drop on a refresh.
+     */
     function snow(factor) {
+        //local tick = hardware.micros();
         // cancel any previous effect currently running
-        imp.cancelwakeup(wakehandle);
+        if (wakehandle) { imp.cancelwakeup(wakehandle); }
+ 
+        // schedule refresh
+        wakehandle = imp.wakeup((REFRESHPERIOD), function() {snow(factor)}.bindenv(this));
+        
+        local newdrop = 0;
+        local next = false;
+        clearFrame();
+        for (local pixel = 0; pixel < pixelvalues.len(); pixel++) {
+            //server.log(pixel);
+            // if there's any color data in this pixel, fade it down 
+            next = false;
+            if (pixelvalues[pixel][0]) { pixelvalues[pixel][0] -= DIMPIXELBY; next = true;}
+            if (pixelvalues[pixel][1]) { pixelvalues[pixel][1] -= DIMPIXELBY; next = true;}
+            if (pixelvalues[pixel][2]) { pixelvalues[pixel][2] -= DIMPIXELBY; next = true;}
+            // skip random number generation if we just dimmed
+            if (!next) {
+                newdrop = math.rand() % NEWPIXELFACTOR;
+                if (newdrop <= factor) {
+                    for (local channel = 0; channel < 3; channel++) {
+                        pixelvalues[pixel][channel] = WHITE[channel];
+                    }
+                }
+            }
+            writePixel(pixel, pixelvalues[pixel]);
+        }
+        writeFrame();
+        //local tock = hardware.micros();
+        //server.log(format("Refreshed Effect in %d us",(tock-tick)));
     }
     
     function ice(factor) {
@@ -426,9 +455,52 @@ class neoWeather extends neoPixels {
         imp.cancelwakeup(wakehandle);
     }
     
+    /* Blue and White fading dots effect.
+     * Factor is 1 to 1000 and changes the number of new "raindrops" per refresh;
+     * (factor / 1000) blank pixels will get a new drop on a refresh.
+     */
     function hail(factor) {
+        //local tick = hardware.micros();
         // cancel any previous effect currently running
-        imp.cancelwakeup(wakehandle);
+        if (wakehandle) { imp.cancelwakeup(wakehandle); }
+ 
+        // schedule refresh
+        wakehandle = imp.wakeup((REFRESHPERIOD), function() {hail(factor)}.bindenv(this));
+        
+        local newdrop = 0;
+        local next = false;
+        clearFrame();
+        for (local pixel = 0; pixel < pixelvalues.len(); pixel++) {
+            //server.log(pixel);
+            // if there's any color data in this pixel, fade it down 
+            next = false;
+            if (pixelvalues[pixel][0]) { pixelvalues[pixel][0] -= DIMPIXELBY; next = true;}
+            if (pixelvalues[pixel][1]) { pixelvalues[pixel][1] -= DIMPIXELBY; next = true;}
+            if (pixelvalues[pixel][2]) { pixelvalues[pixel][2] -= DIMPIXELBY; next = true;}
+            // skip random number generation if we just dimmed
+            if (!next) {
+                newdrop = math.rand() % NEWPIXELFACTOR;
+                if (newdrop <= factor) {
+                    if ((newdrop % 3) == 0) {
+                        for (local channel = 0; channel < 3; channel++) {
+                            pixelvalues[pixel][channel] = BLUE[channel];
+                        }
+                    } else if ((newdrop % 3) == 1) {
+                        for (local channel = 0; channel < 3; channel++) {
+                            pixelvalues[pixel][channel] = MAGENTA[channel];
+                        }
+                    } else {
+                        for (local channel = 0; channel < 3; channel++) {
+                            pixelvalues[pixel][channel] = WHITE[channel];
+                        }
+                    }
+                }
+            }
+            writePixel(pixel, pixelvalues[pixel]);
+        }
+        writeFrame();
+        //local tock = hardware.micros();
+        //server.log(format("Refreshed Effect in %d us",(tock-tick)));
     }
     
     function mist(factor) {
@@ -500,5 +572,5 @@ spi.configure(MSB_FIRST, SPICLK);
 display <- neoWeather(spi, NUMPIXELS);
 
 server.log("ready.");
-display.rain(50);
+display.hail(50);
 server.log("effect started.");
