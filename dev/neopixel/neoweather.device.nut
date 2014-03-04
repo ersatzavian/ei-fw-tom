@@ -340,20 +340,29 @@ class neoPixels {
 
 class neoWeather extends neoPixels {
     
-    REFRESHPERIOD = 0.05; // effects refresh 10 times per second
-    NEWPIXELFACTOR = 1000; // 1/100 pixels will show a new "drop" for a factor 1 effect
-    DIMPIXELBY = 1;    // amount to subtract from each color of each lit pixel each refresh
+    REFRESHPERIOD   = 0.05; // effects refresh 10 times per second
+    NEWPIXELFACTOR  = 1000; // 1/100 pixels will show a new "drop" for a factor 1 effect
+    LIGHTNINGFACTOR = 5000; // factor/5000 refreshes will yield lightning
+    SCALE           = 100;  // NEWPIXELFACTOR / maximum "factor" value provided to an effect
+                            // this class uses factor 0-10 to set intensity
+    MAXNEWDROP      = 500;  // max percent chance a new drop will occur on an empty pixel
+    MAXLIGHTNING    = 10; // max percentage chance lightning will occur on an frame
+    LTBRTSCALE      = 3.1;
+    DIMPIXELPERCENT = 0.8; // percent of previous value to dim a pixel to when fading
     
+    /* default color values */
     RED     = [16,0,0];
     GREEN   = [0,16,0];
     BLUE    = [0,0,16];
     YELLOW  = [8,8,0];
     CYAN    = [0,8,8];
     MAGENTA = [8,0,8];
+    ORANGE  = [16,8,0];
     WHITE   = [7,8,8];
     
+    // an array of [r,g,b] arrays to describe the next frame to be displayed
     pixelvalues = [];
-    wakehandle = 0;
+    wakehandle = 0; // keep track of the next imp.wakeup handle, so we can cancel if changing effects
     
     constructor(_spi, _frameSize) {
         base.constructor(_spi, _frameSize);
@@ -361,7 +370,11 @@ class neoWeather extends neoPixels {
         for (local x = 0; x < _frameSize; x++) { pixelvalues.push([0,0,0]); }
     }
 
-    function none() {
+    /* Stop all effects from displaying and blank out all the pixels.
+     * Input: (none)
+     * Return: (none)
+     */
+    function stop() {
         // cancel any previous effect currently running
         imp.cancelwakeup(wakehandle);
         dialvalues = array(_frameSize, [0,0,0]);
@@ -373,6 +386,7 @@ class neoWeather extends neoPixels {
      * (factor / 1000) blank pixels will get a new drop on a refresh.
      */
     function rain(factor) {
+        local NUMCOLORS = 2;
         //local tick = hardware.micros();
         // cancel any previous effect currently running
         if (wakehandle) { imp.cancelwakeup(wakehandle); }
@@ -381,27 +395,33 @@ class neoWeather extends neoPixels {
         wakehandle = imp.wakeup((REFRESHPERIOD), function() {rain(factor)}.bindenv(this));
         
         local newdrop = 0;
+        local threshold = (factor * SCALE);
+        if (threshold < NUMCOLORS) { threshold = NUMCOLORS; }
+        if (threshold > MAXNEWDROP) { threshold = MAXNEWDROP; }
         local next = false;
         clearFrame();
         for (local pixel = 0; pixel < pixelvalues.len(); pixel++) {
             //server.log(pixel);
             // if there's any color data in this pixel, fade it down 
             next = false;
-            if (pixelvalues[pixel][0]) { pixelvalues[pixel][0] -= DIMPIXELBY; next = true;}
-            if (pixelvalues[pixel][1]) { pixelvalues[pixel][1] -= DIMPIXELBY; next = true;}
-            if (pixelvalues[pixel][2]) { pixelvalues[pixel][2] -= DIMPIXELBY; next = true;}
+            if (pixelvalues[pixel][0]) { pixelvalues[pixel][0] = math.floor(pixelvalues[pixel][0] * DIMPIXELPERCENT); next = true;}
+            if (pixelvalues[pixel][1]) { pixelvalues[pixel][1] = math.floor(pixelvalues[pixel][1] * DIMPIXELPERCENT); next = true;}
+            if (pixelvalues[pixel][2]) { pixelvalues[pixel][2] = math.floor(pixelvalues[pixel][2] * DIMPIXELPERCENT); next = true;}
             // skip random number generation if we just dimmed
             if (!next) {
                 newdrop = math.rand() % NEWPIXELFACTOR;
-                if (newdrop <= factor) {
-                    if (newdrop % 2) {
-                        for (local channel = 0; channel < 3; channel++) {
-                            pixelvalues[pixel][channel] = BLUE[channel];
-                        }
-                    } else {
-                        for (local channel = 0; channel < 3; channel++) {
-                            pixelvalues[pixel][channel] = MAGENTA[channel];
-                        }
+                if (newdrop <= threshold) {
+                    switch (newdrop % NUMCOLORS) {
+                        case 0:
+                            for (local channel = 0; channel < 3; channel++) {
+                                pixelvalues[pixel][channel] = BLUE[channel];
+                            }
+                            break;
+                        default: 
+                            for (local channel = 0; channel < 3; channel++) {
+                                pixelvalues[pixel][channel] = MAGENTA[channel];
+                            }
+                            break;
                     }
                 }
             }
@@ -425,19 +445,22 @@ class neoWeather extends neoPixels {
         wakehandle = imp.wakeup((REFRESHPERIOD), function() {snow(factor)}.bindenv(this));
         
         local newdrop = 0;
+        local threshold = (factor * SCALE);
+        if (threshold < NUMCOLORS) { threshold = NUMCOLORS; }
+        if (threshold > MAXNEWDROP) { threshold = MAXNEWDROP; }
         local next = false;
         clearFrame();
         for (local pixel = 0; pixel < pixelvalues.len(); pixel++) {
             //server.log(pixel);
             // if there's any color data in this pixel, fade it down 
             next = false;
-            if (pixelvalues[pixel][0]) { pixelvalues[pixel][0] -= DIMPIXELBY; next = true;}
-            if (pixelvalues[pixel][1]) { pixelvalues[pixel][1] -= DIMPIXELBY; next = true;}
-            if (pixelvalues[pixel][2]) { pixelvalues[pixel][2] -= DIMPIXELBY; next = true;}
+            if (pixelvalues[pixel][0]) { pixelvalues[pixel][0] = math.floor(pixelvalues[pixel][0] * DIMPIXELPERCENT); next = true;}
+            if (pixelvalues[pixel][1]) { pixelvalues[pixel][1] = math.floor(pixelvalues[pixel][1] * DIMPIXELPERCENT); next = true;}
+            if (pixelvalues[pixel][2]) { pixelvalues[pixel][2] = math.floor(pixelvalues[pixel][2] * DIMPIXELPERCENT); next = true;}
             // skip random number generation if we just dimmed
             if (!next) {
                 newdrop = math.rand() % NEWPIXELFACTOR;
-                if (newdrop <= factor) {
+                if (newdrop <= threshold) {
                     for (local channel = 0; channel < 3; channel++) {
                         pixelvalues[pixel][channel] = WHITE[channel];
                     }
@@ -451,8 +474,6 @@ class neoWeather extends neoPixels {
     }
     
     function ice(factor) {
-        // cancel any previous effect currently running
-        imp.cancelwakeup(wakehandle);
     }
     
     /* Blue and White fading dots effect.
@@ -460,6 +481,7 @@ class neoWeather extends neoPixels {
      * (factor / 1000) blank pixels will get a new drop on a refresh.
      */
     function hail(factor) {
+        local NUMCOLORS = 3; // colors used in this effect
         //local tick = hardware.micros();
         // cancel any previous effect currently running
         if (wakehandle) { imp.cancelwakeup(wakehandle); }
@@ -468,31 +490,41 @@ class neoWeather extends neoPixels {
         wakehandle = imp.wakeup((REFRESHPERIOD), function() {hail(factor)}.bindenv(this));
         
         local newdrop = 0;
+        local threshold = (factor * SCALE);
+        if (threshold < NUMCOLORS) { threshold = NUMCOLORS; }
+        if (threshold > MAXNEWDROP) { threshold = MAXNEWDROP; }
         local next = false;
         clearFrame();
         for (local pixel = 0; pixel < pixelvalues.len(); pixel++) {
             //server.log(pixel);
             // if there's any color data in this pixel, fade it down 
             next = false;
-            if (pixelvalues[pixel][0]) { pixelvalues[pixel][0] -= DIMPIXELBY; next = true;}
-            if (pixelvalues[pixel][1]) { pixelvalues[pixel][1] -= DIMPIXELBY; next = true;}
-            if (pixelvalues[pixel][2]) { pixelvalues[pixel][2] -= DIMPIXELBY; next = true;}
+            if (pixelvalues[pixel][0]) { pixelvalues[pixel][0] = math.floor(pixelvalues[pixel][0] * DIMPIXELPERCENT); next = true;}
+            if (pixelvalues[pixel][1]) { pixelvalues[pixel][1] = math.floor(pixelvalues[pixel][1] * DIMPIXELPERCENT); next = true;}
+            if (pixelvalues[pixel][2]) { pixelvalues[pixel][2] = math.floor(pixelvalues[pixel][2] * DIMPIXELPERCENT); next = true;}
             // skip random number generation if we just dimmed
             if (!next) {
                 newdrop = math.rand() % NEWPIXELFACTOR;
-                if (newdrop <= factor) {
-                    if ((newdrop % 3) == 0) {
-                        for (local channel = 0; channel < 3; channel++) {
-                            pixelvalues[pixel][channel] = BLUE[channel];
-                        }
-                    } else if ((newdrop % 3) == 1) {
-                        for (local channel = 0; channel < 3; channel++) {
-                            pixelvalues[pixel][channel] = MAGENTA[channel];
-                        }
-                    } else {
-                        for (local channel = 0; channel < 3; channel++) {
-                            pixelvalues[pixel][channel] = WHITE[channel];
-                        }
+                if (newdrop <= threshold) {
+                    switch (newdrop % NUMCOLORS) {
+                        case 0: 
+                            //server.log("cyan");
+                            for (local channel = 0; channel < 3; channel++) {
+                                pixelvalues[pixel][channel] = CYAN[channel];
+                            }
+                            break;
+                        case 1: 
+                            //server.log("magenta");
+                            for (local channel = 0; channel < 3; channel++) {
+                                pixelvalues[pixel][channel] = MAGENTA[channel];
+                            }
+                            break;
+                        default: 
+                            //server.log("white");
+                            for (local channel = 0; channel < 3; channel++) {
+                                pixelvalues[pixel][channel] = WHITE[channel];
+                            }
+                            break;
                     }
                 }
             }
@@ -504,18 +536,71 @@ class neoWeather extends neoPixels {
     }
     
     function mist(factor) {
-        // cancel any previous effect currently running
-        imp.cancelwakeup(wakehandle);
     }
     
     function fog(factor) {
-        // cancel any previous effect currently running
-        imp.cancelwakeup(wakehandle);
     }
     
     function thunder(factor) {
+        local NUMCOLORS = 2;
+        //local tick = hardware.micros();
         // cancel any previous effect currently running
-        imp.cancelwakeup(wakehandle);
+        if (wakehandle) { imp.cancelwakeup(wakehandle); }
+ 
+        // schedule refresh
+        wakehandle = imp.wakeup((REFRESHPERIOD), function() {thunder(factor)}.bindenv(this));
+        
+        local newdrop = 0;
+        local threshold = (factor * SCALE);
+        if (threshold < NUMCOLORS) { threshold = NUMCOLORS; }
+        if (threshold > MAXNEWDROP) { threshold = MAXNEWDROP; }
+        //server.log(threshold);
+        
+        local lightningthreshold = factor;
+        if (lightningthreshold > MAXLIGHTNING) { threshold = MAXLIGHTNING; }
+        
+        local lightningcheck = math.rand() % LIGHTNINGFACTOR;
+        local next = false;
+        clearFrame();
+        if (lightningcheck <= lightningthreshold) {
+            local lightningbrightness = math.floor(factor * LTBRTSCALE);
+            for (local pixel = 0; pixel < pixelvalues.len(); pixel++) {
+                for (local channel = 0; channel < 3; channel++) {
+                    pixelvalues[pixel][channel] = lightningbrightness * YELLOW[channel];
+                }
+            }
+        } else {
+            for (local pixel = 0; pixel < pixelvalues.len(); pixel++) {
+                //server.log(pixel);
+                // if there's any color data in this pixel, fade it down 
+                next = false;
+                if (pixelvalues[pixel][0]) { pixelvalues[pixel][0] = math.floor(pixelvalues[pixel][0] * DIMPIXELPERCENT); next = true;}
+                if (pixelvalues[pixel][1]) { pixelvalues[pixel][1] = math.floor(pixelvalues[pixel][1] * DIMPIXELPERCENT); next = true;}
+                if (pixelvalues[pixel][2]) { pixelvalues[pixel][2] = math.floor(pixelvalues[pixel][2] * DIMPIXELPERCENT); next = true;}
+                // skip random number generation if we just dimmed
+                if (!next) {
+                    newdrop = math.rand() % NEWPIXELFACTOR;
+                    if (newdrop <= threshold) {
+                        switch (newdrop % NUMCOLORS) {
+                            case 0:
+                                for (local channel = 0; channel < 3; channel++) {
+                                    pixelvalues[pixel][channel] = BLUE[channel];
+                                }
+                                break;
+                            default: 
+                                for (local channel = 0; channel < 3; channel++) {
+                                    pixelvalues[pixel][channel] = MAGENTA[channel];
+                                }
+                                break;
+                        }
+                    }
+                }
+                writePixel(pixel, pixelvalues[pixel]);
+            }
+        }
+        writeFrame();
+        //local tock = hardware.micros();
+        //server.log(format("Refreshed Effect in %d us",(tock-tick)));
     }
     
     function temp(val, factor) {
@@ -538,7 +623,7 @@ agent.on("seteffect", function(val) {
     if (cond == "drizzle") {
         display.rain(1);
     } else if (cond == "rain") {
-        display.rain(100);
+        display.rain(2);
     } else if (cond == "snow") {
         display.snow(1);
     } else if (cond == "ice") {
@@ -550,13 +635,13 @@ agent.on("seteffect", function(val) {
     } else if (cond == "fog") {
         display.fog(1);
     } else if (cond == "thunderstorm") {
-        display.thunder(100);
+        display.thunder(2);
     } else if (cond == "clear") {
-        display.temp(temp, 300);    
+        display.temp(temp, 4);    
     } else if (cond == "mostlycloudy") {
-        display.temp(temp, 200); 
+        display.temp(temp, 3); 
     } else if (cond == "partlycloudy") {
-        display.temp(temp, 100);
+        display.temp(temp, 2);
     } else {
         display.temp(temp, 1);
     }
@@ -572,5 +657,5 @@ spi.configure(MSB_FIRST, SPICLK);
 display <- neoWeather(spi, NUMPIXELS);
 
 server.log("ready.");
-display.hail(50);
+display.thunder(5);
 server.log("effect started.");
