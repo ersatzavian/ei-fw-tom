@@ -346,9 +346,9 @@ class neoWeather extends neoPixels {
     SCALE           = 100;  // NEWPIXELFACTOR / maximum "factor" value provided to an effect
                             // this class uses factor 0-10 to set intensity
     MAXNEWDROP      = 500;  // max percent chance a new drop will occur on an empty pixel
-    MAXLIGHTNING    = 10; // max percentage chance lightning will occur on an frame
-    LTBRTSCALE      = 3.1;
-    DIMPIXELPERCENT = 0.8; // percent of previous value to dim a pixel to when fading
+    MAXLIGHTNING    = 10;   // max percentage chance lightning will occur on an frame
+    LTBRTSCALE      = 3.1;  // amount to scale lightning brightness with intensity factor
+    DIMPIXELPERCENT = 0.8;  // percent of previous value to dim a pixel to when fading
     
     /* default color values */
     RED     = [16,0,0];
@@ -382,8 +382,7 @@ class neoWeather extends neoPixels {
     }
     
     /* Blue and Purple fading dots effect.
-     * Factor is 1 to 1000 and changes the number of new "raindrops" per refresh;
-     * (factor / 1000) blank pixels will get a new drop on a refresh.
+     * Factor is 1 to 10 and scales the number of new raindrops per refresh.
      */
     function rain(factor) {
         local NUMCOLORS = 2;
@@ -433,8 +432,7 @@ class neoWeather extends neoPixels {
     }
     
     /* White fading dots effect.
-     * Factor is 1 to 1000 and changes the number of new "raindrops" per refresh;
-     * (factor / 1000) blank pixels will get a new drop on a refresh.
+     * Factor is 1 to 10 and scales the number of new raindrops per refresh.
      */
     function snow(factor) {
         //local tick = hardware.micros();
@@ -473,12 +471,8 @@ class neoWeather extends neoPixels {
         //server.log(format("Refreshed Effect in %d us",(tock-tick)));
     }
     
-    function ice(factor) {
-    }
-    
     /* Blue and White fading dots effect.
-     * Factor is 1 to 1000 and changes the number of new "raindrops" per refresh;
-     * (factor / 1000) blank pixels will get a new drop on a refresh.
+     * Factor is 1 to 10 and scales the number of new raindrops per refresh.
      */
     function hail(factor) {
         local NUMCOLORS = 3; // colors used in this effect
@@ -535,12 +529,10 @@ class neoWeather extends neoPixels {
         //server.log(format("Refreshed Effect in %d us",(tock-tick)));
     }
     
-    function mist(factor) {
-    }
-    
-    function fog(factor) {
-    }
-    
+    /* Blue and Purple fading dots effect with yellow "lightning strikes".
+     * Factor is 0 to 10 and scales the number of new raindrops per refresh, 
+     * as well as frequency of lightning.
+     */
     function thunder(factor) {
         local NUMCOLORS = 2;
         //local tick = hardware.micros();
@@ -601,6 +593,15 @@ class neoWeather extends neoPixels {
         writeFrame();
         //local tock = hardware.micros();
         //server.log(format("Refreshed Effect in %d us",(tock-tick)));
+    }
+    
+    function ice(factor) {
+    }
+    
+    function mist(factor) {
+    }
+    
+    function fog(factor) {
     }
     
     function temp(val, factor) {
