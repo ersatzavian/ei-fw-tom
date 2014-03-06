@@ -13,9 +13,6 @@ const ZERO      = 0xC0;
 const ONE       = 0xF8;
 const SPICLK    = 7500; // kHz
 
-// This is used for timing testing only
-us <- hardware.micros.bindenv(hardware);
-
 /* This class requires the use of SPI257, which must be run at 7.5MHz 
  * to support neopixel timing. */
 const SPICLK = 7500; // kHz
@@ -111,6 +108,7 @@ class NeoPixels {
 
 class NeoWeather extends NeoPixels {
     
+    /* control parameter for raindrop and thunder effects */
     REFRESHPERIOD       = 0.05; // normal effects refresh 20 times per second
     SLOWREFRESHPERIOD   = 0.2;  // slow effects refresh 5 times per second 
     NEWPIXELFACTOR      = 1000; // 1/100 pixels will show a new "drop" for a factor 1 effect
@@ -122,6 +120,12 @@ class NeoWeather extends NeoPixels {
     LTBRTSCALE          = 3.1;  // amount to scale lightning brightness with intensity factor
     DIMPIXELPERCENT     = 0.8;  // percent of previous value to dim a pixel to when fading
     MAXBRIGHTNESS       = 24;   // maximum sum of channels to fade up to for ice, fog, and mist effects
+    
+    /* control parameters for temperature color effect */
+    TEMPFACTORDIV   = 4.0;
+    TEMPRANGE       = 40; // 40 degrees C of range
+    TEMPMIN         = -10;
+    TEMPRBOFFSET    = 10; // red and green stay out of the middle by 10 degrees each to avoid white
     
     /* default color values */
     RED         = [16,0,0];
@@ -463,7 +467,51 @@ class NeoWeather extends NeoPixels {
         writeFrame();
     }
     
+    /* Set the color based on the temperature, and the brightness based on the 
+     * factor. Temperature range is -10 to 30 C, where -10 is all-blue, and 
+     * 30 is all-red. */
     function temp(val, factor) {
+        // cancel any previous effect currently running
+        if (wakehandle) { imp.cancelwakeup(wakehandle); }
+        
+        factor = factor / TEMPFACTORDIV;
+        
+        // min temp is -10 C (full-on blue)
+        // max temp is 30 C (full-on red)
+        // scale temp up by 10 so we're dealing only with positive numbers
+        if (TEMPMIN < 0) { val += (-1 * TEMPMIN); } 
+        if (val < 0) { val = 0; }
+        if (val > TEMPRANGE) { val = TEMPRANGE; } 
+        
+        // scale red proportionally to temp, from -10 to 20 C
+        local r_scale = (RED[0] * 1.0) / (TEMPRANGE - TEMPRBOFFSET);
+        local r = (factor * r_scale * (val - TEMPRBOFFSET));
+        if (val < TEMPRBOFFSET) { r = 0 }
+        
+        // scale green proportionally to temp from 0 to 10, inversely to temp from 10 to 20
+        local g_range = (TEMPRANGE - (2 * TEMPRBOFFSET)) / 2; // green shifts over a 10-degree range
+        local g_max = (2 * TEMPRBOFFSET);               // green max occurs at val = 20 (10 degrees)
+        local g_scale = 2 * ((GREEN[1] * 1.0) / g_range);
+        local g = 0;
+        if ((val < TEMPRBOFFSET) || (val > (TEMPRANGE - TEMPRBOFFSET))) { g = 0; } 
+        else {
+            g = factor * g_scale * (g_range - math.abs(g_max - val));
+        }
+        
+        // scale blue inverse to temp, from -10 to 20 C
+        local b_scale = (BLUE[2] * 1.0) / (TEMPRANGE - TEMPRBOFFSET);
+        local b = (factor * b_scale * ((TEMPRANGE - TEMPRBOFFSET) - val));
+        if (val > (TEMPRANGE - TEMPRBOFFSET)) { b = 0; }
+        
+        server.log(format("%d, %d, %d", r, g, b));
+        
+        for (local pixel = 0; pixel < pixelvalues.len(); pixel++) {
+            pixelvalues[pixel][0] = r;
+            pixelvalues[pixel][1] = g;
+            pixelvalues[pixel][2] = b;
+            writePixel(pixel, pixelvalues[pixel]);
+        }
+        writeFrame();
     }
 }
 
@@ -515,5 +563,4 @@ spi.configure(MSB_FIRST, SPICLK);
 display <- NeoWeather(spi, NUMPIXELS);
 
 server.log("ready.");
-display.fog();
-server.log("effect started.");
+display.temp(25, 2);
