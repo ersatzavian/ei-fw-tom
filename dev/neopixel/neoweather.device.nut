@@ -111,25 +111,27 @@ class NeoPixels {
 
 class NeoWeather extends NeoPixels {
     
-    REFRESHPERIOD   = 0.05; // effects refresh 10 times per second
-    NEWPIXELFACTOR  = 1000; // 1/100 pixels will show a new "drop" for a factor 1 effect
-    LIGHTNINGFACTOR = 5000; // factor/5000 refreshes will yield lightning
-    SCALE           = 100;  // NEWPIXELFACTOR / maximum "factor" value provided to an effect
+    REFRESHPERIOD       = 0.05; // normal effects refresh 20 times per second
+    SLOWREFRESHPERIOD   = 0.2;  // slow effects refresh 5 times per second 
+    NEWPIXELFACTOR      = 1000; // 1/100 pixels will show a new "drop" for a factor 1 effect
+    LIGHTNINGFACTOR     = 5000; // factor/5000 refreshes will yield lightning
+    SCALE               = 100;  // NEWPIXELFACTOR / maximum "factor" value provided to an effect
                             // this class uses factor 0-10 to set intensity
-    MAXNEWDROP      = 500;  // max percent chance a new drop will occur on an empty pixel
-    MAXLIGHTNING    = 10;   // max percentage chance lightning will occur on an frame
-    LTBRTSCALE      = 3.1;  // amount to scale lightning brightness with intensity factor
-    DIMPIXELPERCENT = 0.8;  // percent of previous value to dim a pixel to when fading
+    MAXNEWDROP          = 500;  // max percent chance a new drop will occur on an empty pixel
+    MAXLIGHTNING        = 10;   // max percentage chance lightning will occur on an frame
+    LTBRTSCALE          = 3.1;  // amount to scale lightning brightness with intensity factor
+    DIMPIXELPERCENT     = 0.8;  // percent of previous value to dim a pixel to when fading
+    MAXBRIGHTNESS       = 24;   // maximum sum of channels to fade up to for ice, fog, and mist effects
     
     /* default color values */
-    RED     = [16,0,0];
-    GREEN   = [0,16,0];
-    BLUE    = [0,0,16];
-    YELLOW  = [8,8,0];
-    CYAN    = [0,8,8];
-    MAGENTA = [8,0,8];
-    ORANGE  = [16,8,0];
-    WHITE   = [7,8,8];
+    RED         = [16,0,0];
+    GREEN       = [0,16,0];
+    BLUE        = [0,0,16];
+    YELLOW      = [8,8,0];
+    CYAN        = [0,8,8];
+    MAGENTA     = [8,0,8];
+    ORANGE      = [16,8,0];
+    WHITE       = [8,8,8];
     
     // an array of [r,g,b] arrays to describe the next frame to be displayed
     pixelvalues = [];
@@ -147,9 +149,10 @@ class NeoWeather extends NeoPixels {
      */
     function stop() {
         // cancel any previous effect currently running
-        imp.cancelwakeup(wakehandle);
+        if (wakehandle) { imp.cancelwakeup(wakehandle); }
         dialvalues = array(_frameSize, [0,0,0]);
-        draw();
+        clearFrame();
+        writeFrame();
     }
     
     /* Blue and Purple fading dots effect.
@@ -351,13 +354,113 @@ class NeoWeather extends NeoPixels {
         writeFrame();
     }
     
-    function ice(factor) {
+    /* Rotate pixelvalues array
+     * this is used to animate the ice, mist, and fog effects. */
+    function rotate_gradient() {
+        // schedule refresh
+        wakehandle = imp.wakeup((REFRESHPERIOD), function() {rotate_gradient()}.bindenv(this));
+        
+        // wrap around the end of the array
+        for (local ch = 0; ch < 3; ch++) {
+            pixelvalues[frameSize - 1][ch] = pixelvalues[0][ch];
+        }
+        writePixel(frameSize - 1, pixelvalues[frameSize - 1]);
+        
+        //shift each pixel over by one
+        for (local pixel = 0; pixel < (frameSize - 1); pixel++) {
+            for (local ch = 0; ch < 3; ch++) {
+                pixelvalues[pixel][ch] = pixelvalues[pixel + 1][ch]; 
+            }
+            writePixel(pixel, pixelvalues[pixel]);
+        }
+        writeFrame();
     }
     
-    function mist(factor) {
+    /* Blue / white gradient circles the display
+     * No input parameters
+     */
+    function ice() {
+        // cancel any previous effect currently running
+        if (wakehandle) { imp.cancelwakeup(wakehandle); }
+        
+        // schedule refresh
+        wakehandle = imp.wakeup((REFRESHPERIOD), function() {rotate_gradient()}.bindenv(this));
+        
+        local opposite = frameSize / 2;
+        local step = (1.0 * WHITE[0]) / ((1.0 * opposite));
+        
+        for (local pixel = 0; pixel < pixelvalues.len(); pixel++) {
+            if (pixel < opposite) {
+                pixelvalues[pixel][0] = math.floor((opposite - pixel) * step);
+                pixelvalues[pixel][1] = math.floor((opposite - pixel) * step);
+                pixelvalues[pixel][2] = math.floor(((opposite - pixel) * step) + (pixel * step));
+            } else {
+                pixelvalues[pixel][0] = math.floor((pixel - opposite) * step);
+                pixelvalues[pixel][1] = math.floor((pixel - opposite) * step);
+                pixelvalues[pixel][2] = math.floor(((pixel - opposite) * step) + (frameSize - pixel) * step);
+            }
+            writePixel(pixel, pixelvalues[pixel]);
+        }
+        writeFrame();
     }
     
-    function fog(factor) {
+    /* Cyan / white gradient circles the display
+     * No input parameters
+     */
+    function mist() {
+        // cancel any previous effect currently running
+        if (wakehandle) { imp.cancelwakeup(wakehandle); }
+        
+        // schedule refresh
+        wakehandle = imp.wakeup((REFRESHPERIOD), function() {rotate_gradient()}.bindenv(this));
+        
+        local opposite = frameSize / 2;
+        local step = (1.0 * WHITE[0]) / ((1.0 * opposite));
+        
+        for (local pixel = 0; pixel < pixelvalues.len(); pixel++) {
+            if (pixel < opposite) {
+                pixelvalues[pixel][0] = math.floor((opposite - pixel) * step);
+                pixelvalues[pixel][1] = math.floor(((opposite - pixel) * step) + (pixel * step));
+                pixelvalues[pixel][2] = math.floor(((opposite - pixel) * step) + (pixel * step));
+            } else {
+                pixelvalues[pixel][0] = math.floor((pixel - opposite) * step);
+                pixelvalues[pixel][1] = math.floor(((pixel - opposite) * step) + (frameSize - pixel) * step);
+                pixelvalues[pixel][2] = math.floor(((pixel - opposite) * step) + (frameSize - pixel) * step);
+            }
+            writePixel(pixel, pixelvalues[pixel]);
+        }
+        writeFrame();
+    }
+    
+    /* White gradient circles the display
+     * No input parameters
+     */
+    function fog() {
+        local baseval = 4;
+        
+        // cancel any previous effect currently running
+        if (wakehandle) { imp.cancelwakeup(wakehandle); }
+        
+        // schedule refresh
+        wakehandle = imp.wakeup((REFRESHPERIOD), function() {rotate_gradient()}.bindenv(this));
+        
+        local opposite = frameSize / 2;
+        local step = (2.0 * WHITE[0]) / ((1.0 * opposite));
+        server.log(step);
+        
+        for (local pixel = 0; pixel < pixelvalues.len(); pixel++) {
+            if (pixel < opposite) {
+                pixelvalues[pixel][0] = math.floor((opposite - pixel) * step) + baseval;
+                pixelvalues[pixel][1] = math.floor((opposite - pixel) * step) + baseval;
+                pixelvalues[pixel][2] = math.floor((opposite - pixel) * step) + baseval;
+            } else {
+                pixelvalues[pixel][0] = math.floor((pixel - opposite) * step) + baseval;
+                pixelvalues[pixel][1] = math.floor((pixel - opposite) * step) + baseval;
+                pixelvalues[pixel][2] = math.floor((pixel - opposite) * step) + baseval;
+            }
+            writePixel(pixel, pixelvalues[pixel]);
+        }
+        writeFrame();
     }
     
     function temp(val, factor) {
@@ -382,13 +485,13 @@ agent.on("seteffect", function(val) {
     } else if (cond == "snow") {
         display.snow(1);
     } else if (cond == "ice") {
-        display.ice(1);
+        display.ice();
     } else if (cond == "hail") {
         display.hail(1);
     } else if (cond == "mist") {
-        display.mist(1);
+        display.mist();
     } else if (cond == "fog") {
-        display.fog(1);
+        display.fog();
     } else if (cond == "thunderstorm") {
         display.thunder(2);
     } else if (cond == "clear") {
@@ -412,5 +515,5 @@ spi.configure(MSB_FIRST, SPICLK);
 display <- NeoWeather(spi, NUMPIXELS);
 
 server.log("ready.");
-display.rain(4);
+display.fog();
 server.log("effect started.");
