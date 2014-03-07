@@ -503,8 +503,6 @@ class NeoWeather extends NeoPixels {
         local b = (factor * b_scale * ((TEMPRANGE - TEMPRBOFFSET) - val));
         if (val > (TEMPRANGE - TEMPRBOFFSET)) { b = 0; }
         
-        server.log(format("%d, %d, %d", r, g, b));
-        
         for (local pixel = 0; pixel < pixelvalues.len(); pixel++) {
             pixelvalues[pixel][0] = r;
             pixelvalues[pixel][1] = g;
@@ -518,6 +516,8 @@ class NeoWeather extends NeoPixels {
 /* AGENT CALLBACKS -----------------------------------------------------------*/
 
 agent.on("seteffect", function(val) {
+    local cond = null;
+    local temp = null;
     try {
         cond = val.conditions;
         temp = val.temperature;
@@ -526,28 +526,58 @@ agent.on("seteffect", function(val) {
         return;
     }
     
-    if (cond == "drizzle") {
-        display.rain(1);
-    } else if (cond == "rain") {
-        display.rain(2);
-    } else if (cond == "snow") {
-        display.snow(1);
-    } else if (cond == "ice") {
+    if (cond.find("Thunderstorms") != null){
+        if (cond.find("Light") != null) {
+            display.thunder(0);
+        } else if (cond.find("Heavy") != null) {
+            display.thunder(4);
+        } else {
+            display.thunder(2);
+        }
+    } else if (cond.find("Hail") != null) {
+        if (cond.find("Light") != null) {
+            display.hail(0);
+        } else if (cond.find("Heavy") != null) {
+            display.hail(4);
+        } else {
+            display.hail(2);
+        }
+    } else if (cond.find("Drizzle") != null){
+        if (cond.find("Light") != null) {
+            display.rain(0);
+        } else if (cond.find("Heavy") != null) {
+            display.rain(2);
+        } else {
+            display.rain(1);
+        }
+    } else if (cond.find("Rain") != null) {
+        if (cond.find("Light") != null) {
+            display.rain(3);
+        } else if (cond.find("Heavy") != null) {
+            display.rain(5);
+        } else {
+            display.rain(4);
+        }
+    } else if (cond.find("Snow") != null) {
+        if (cond.find("Light") != null) {
+            display.snow(0);
+        } else if (cond.find("Heavy") != null) {
+            display.snow(4);
+        } else {
+            display.rain(2);
+        }
+    } else if (cond.find("Ice") != null) {
         display.ice();
-    } else if (cond == "hail") {
-        display.hail(1);
-    } else if (cond == "mist") {
-        display.mist();
-    } else if (cond == "fog") {
+    } else if ((cond.find("Fog") != null)|| (cond.find("Haze") != null) || (cond.find("Dust") != null) || (cond.find("Sand") != null) || (cond.find("Smoke") != null) || (cond.find("Ash") != null)) {
         display.fog();
-    } else if (cond == "thunderstorm") {
-        display.thunder(2);
-    } else if (cond == "clear") {
-        display.temp(temp, 4);    
-    } else if (cond == "mostlycloudy") {
-        display.temp(temp, 3); 
-    } else if (cond == "partlycloudy") {
-        display.temp(temp, 2);
+    } else if ((cond.find("Mist") != null) || (cond.find("Spray") != null)) {
+        display.mist();
+    } else if (cond.find("Clear") != null) {
+        display.temp(temp, 3);    
+    } else if (cond.find("Cloud") != null) {
+        display.temp(temp, 2);    
+    } else if (cond.find("Overcast") != null) {
+        display.temp(temp, 1);    
     } else {
         display.temp(temp, 1);
     }
@@ -563,4 +593,3 @@ spi.configure(MSB_FIRST, SPICLK);
 display <- NeoWeather(spi, NUMPIXELS);
 
 server.log("ready.");
-display.temp(25, 2);
