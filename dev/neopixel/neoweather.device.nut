@@ -209,6 +209,7 @@ class NeoWeather extends NeoPixels {
      * Factor is 1 to 10 and scales the number of new raindrops per refresh.
      */
     function snow(factor) {
+        local NUMCOLORS = 1;
         // cancel any previous effect currently running
         if (wakehandle) { imp.cancelwakeup(wakehandle); }
  
@@ -560,7 +561,7 @@ agent.on("seteffect", function(val) {
         }
     } else if (cond.find("Snow") != null) {
         if (cond.find("Light") != null) {
-            display.snow(0);
+            display.snow(1);
         } else if (cond.find("Heavy") != null) {
             display.snow(4);
         } else {
@@ -586,7 +587,7 @@ agent.on("seteffect", function(val) {
 /* RUNTIME BEGINS HERE -------------------------------------------------------*/
 
 // The number of pixels in your chain
-const NUMPIXELS = 64;
+const NUMPIXELS = 24;
 
 spi <- hardware.spi257;
 spi.configure(MSB_FIRST, SPICLK);
