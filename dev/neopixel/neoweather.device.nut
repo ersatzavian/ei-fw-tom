@@ -1,11 +1,9 @@
-/* Weather Effects Driver for WS2812 "Neopixel" LED Driver
- * Copyright (C) 2014 Electric Imp, inc.
- * 
- * Uses SPI to emulate 1-wire
- * http://learn.adafruit.com/adafruit-neopixel-uberguide/advanced-coding
- *
- */
- 
+// Weather Effects Driver for WS2812 "Neopixel" LED Driver
+// Copyright (C) 2014 Electric Imp, inc.
+// 
+// Uses SPI to emulate 1-wire
+// http://learn.adafruit.com/adafruit-neopixel-uberguide/advanced-coding
+
 /* CONSTS AND GLOBALS --------------------------------------------------------*/
 
 // constants for using SPI to emulate 1-wire

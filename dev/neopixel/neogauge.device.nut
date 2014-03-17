@@ -1,13 +1,11 @@
-/* Progress Gauge WS2812 "Neopixel" LED Driver
- * Copyright (C) 2014 Electric Imp, inc.
- * 
- * Uses SPI to emulate 1-wire
- * http://learn.adafruit.com/adafruit-neopixel-uberguide/advanced-coding
- *
- */
+// Progress Gauge WS2812 "Neopixel" LED Driver
+// Copyright (C) 2014 Electric Imp, inc. 
+//
+// Uses SPI to emulate 1-wire
+// http://learn.adafruit.com/adafruit-neopixel-uberguide/advanced-coding
 
-/* This class requires the use of SPI257, which must be run at 7.5MHz 
- * to support neopixel timing. */
+// This class requires the use of SPI257, which must be run at 7.5MHz 
+// to support neopixel timing.
 const SPICLK = 7500; // kHz
 
 // This is used for timing testing only
@@ -140,7 +138,7 @@ class NeoDial extends NeoPixels {
         clearFrame();
         // during a fade animation, emphasize one gauge over all the other markers
         foreach (gaugename, gauge in gauges) {
-            local markerpixel = gauge.level * this.frameSize;
+            local markerpixel = gauge.level * (dialvalues.len() - 1);
             if (gaugename == emphasisname) {
                 for (local pixel = 0; pixel <= markerpixel; pixel++) {
                     dialvalues[pixel][0] += (gauge.color[0] * emphasisfactor);
@@ -199,7 +197,8 @@ class NeoDial extends NeoPixels {
 /* AGENT CALLBACKS -----------------------------------------------------------*/
 
 agent.on("set", function(val) {
-    dial.setlevel(val.name, val.level);
+    server.log("Setting "+val.name+" to "+val.level);
+    dial.setLevel(val.name, val.level);
 });
 
 agent.on("remove", function(gaugename) {
@@ -209,26 +208,10 @@ agent.on("remove", function(gaugename) {
 /* RUNTIME BEGINS HERE -------------------------------------------------------*/
 
 // The number of pixels in your chain
-const NUMPIXELS = 12;
+const NUMPIXELS = 24;
 
 spi <- hardware.spi257;
 spi.configure(MSB_FIRST, SPICLK);
 dial <- NeoDial(spi, NUMPIXELS);
 
-dial.setLevel("pkg1", 0.2);
-
-imp.wakeup(1, function() {
-    dial.setLevel("pkg2", 0.7);
-    imp.wakeup(2, function() {
-        dial.remove("pkg1");
-        imp.wakeup(1, function() {
-            dial.setLevel("pkg2", 0.3);
-            imp.wakeup(1, function() {
-                dial.setLevel("pkg1", 0.5);
-                imp.wakeup(1, function() {
-                    dial.setLevel("pkg1", 0.8);
-                });
-            });
-        });
-    });
-});
+agent.send("start", 0);
