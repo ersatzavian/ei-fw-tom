@@ -11,7 +11,7 @@ WEBPAGE <- null;
 
 // Add your own wunderground API Key here. 
 // Register for free at http://api.wunderground.com/weather/api/
-const WUNDERGROUND_KEY = "601381b054664daf";
+const WUNDERGROUND_KEY = "YOUR KEY HERE";
 local WUNDERGROUND_URL = "http://api.wunderground.com/api/";
 local LOCATIONSTR = "94041";
 savedata <- server.load();
