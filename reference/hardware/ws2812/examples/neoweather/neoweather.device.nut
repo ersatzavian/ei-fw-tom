@@ -3,7 +3,7 @@
 // 
 // Uses SPI to emulate 1-wire
 // http://learn.adafruit.com/adafruit-neopixel-uberguide/advanced-coding
-
+ 
 /* CONSTS AND GLOBALS --------------------------------------------------------*/
 
 // constants for using SPI to emulate 1-wire
@@ -207,7 +207,6 @@ class NeoWeather extends NeoPixels {
      * Factor is 1 to 10 and scales the number of new raindrops per refresh.
      */
     function snow(factor) {
-        local NUMCOLORS = 1;
         // cancel any previous effect currently running
         if (wakehandle) { imp.cancelwakeup(wakehandle); }
  
@@ -525,7 +524,7 @@ agent.on("seteffect", function(val) {
         return;
     }
     
-    if (cond.find("Thunderstorms") != null){
+    if (cond.find("Thunderstorm") != null){
         if (cond.find("Light") != null) {
             display.thunder(0);
         } else if (cond.find("Heavy") != null) {
@@ -559,7 +558,7 @@ agent.on("seteffect", function(val) {
         }
     } else if (cond.find("Snow") != null) {
         if (cond.find("Light") != null) {
-            display.snow(1);
+            display.snow(0);
         } else if (cond.find("Heavy") != null) {
             display.snow(4);
         } else {
