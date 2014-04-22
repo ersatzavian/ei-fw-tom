@@ -16,11 +16,9 @@ function parse(hexblob) {
     local gotack        = false;
     local rawidx        = 0;
     local result        = blob(5); // 2-byte humidity, 2-byte temp, 1-byte checksum
-    local resultstr     = "";
 
     local humid         = 0;
     local temp          = 0;
-    local checksum      = 0;
     
     // iterate through each bit of each byte of the returned signal
     for (local byte = 0; byte < hexblob.len(); byte++) {
@@ -40,19 +38,20 @@ function parse(hexblob) {
                     local hightime = (idx - lastbitidx) * bittime;
                     
                     // we now have one valid bit of info. Figure out what symbol it is.
+                    local resultbyte = (rawidx / 8);
+                    local resultbit =  7 - (rawidx % 8);
+                    //server.log(format("bit %d of byte %d",resultbit, resultbyte));
                     if (hightime < ZERO) {
                         // this is a zero
                         if (gotack) {
                             // don't record any data before the ACK is seen
-                            result[rawidx/8] = result[rawidx/8] & ~(0x80 >> (rawidx % 7));
-                            resultstr += "0";
+                            result[resultbyte] = result[resultbyte] & ~(0x01 << resultbit);
                             rawidx++;
                         }
                     } else if (hightime < ONE) {
                         // this is a one
                         if (gotack) {
-                            result[rawidx/8] = result[rawidx/8] | (0x80 >> (rawidx % 7));
-                            resultstr += "1";
+                            result[resultbyte] = result[resultbyte] | (0x01 << resultbit);
                             rawidx++;
                         }
                     } else {
@@ -64,16 +63,18 @@ function parse(hexblob) {
         }
     }
     
-    server.log("string parsed: "+resultstr);
-    server.log(format("bit parsed: 0x %02x%02x %02x%02x %02x",result[0],result[1],result[2],result[3],result[4]));
+    //server.log(format("parsed: 0x %02x%02x %02x%02x %02x",result[0],result[1],result[2],result[3],result[4]));
     
-    humid = ((result[0] << 8) + result[1]) / 10.0;
-    temp = ((result[2] << 8) + result[3]) / 10.0;
-    checksum = result[4];
-    
-    server.log(format("Humidity: %0.2f",humid));
-    server.log(format("Temperature: %0.2f",temp));
-    server.log(format("Checksum: 0x%02x",checksum));
+    humid = (result[0] * 1.0) + (result[1] / 1000.0);
+    temp = (result[2] * 1.0) + (result[3] / 1000.0);
+    if (((result[0] + result[1] + result[2] + result[3]) & 0xff) != result[4]) {
+        server.log("Checksum Error");
+        return {"rh":0,"temp":0};
+    } else {
+        server.log(format("Relative Humidity: %0.1f",humid)+" %");
+        server.log(format("Temperature: %0.1f C",temp));a
+        return {"rh":humid,"temp":temp};
+    }
 }
 
 function read() {
