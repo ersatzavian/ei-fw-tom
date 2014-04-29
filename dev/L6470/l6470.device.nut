@@ -3,49 +3,85 @@
 
 // Consts and Globals ---------------------------------------------------------
 const SPICLK = 4000; // kHz
+const STEPS_PER_REV = 48; // using sparkfun's small stepper motor
+
+const CONFIG_PWMDIV_1      = 0x0000;
+const CONFIG_PWMDIV_2      = 0x2000;
+const CONFIG_PWMDIV_3      = 0x4000;
+const CONFIG_PWMDIV_4      = 0x5000;
+const CONFIG_PWMDIV_5      = 0x8000;
+const CONFIG_PWMDIV_6      = 0xA000;
+const CONFIG_PWMDIV_7      = 0xC000;
+const CONFIG_PWMMULT_0_625 = 0x0000;
+const CONFIG_PWMMULT_0_750 = 0x0400;
+const CONFIG_PWMMULT_0_875 = 0x0800;
+const CONFIG_PWMMULT_1_000 = 0x0C00;
+const CONFIG_PWMMULT_1_250 = 0x1000;
+const CONFIG_PWMMULT_1_500 = 0x1400;
+const CONFIG_PWMMULT_1_750 = 0x1800;
+const CONFIG_PWMMULT_2_000 = 0x1C00;
+const CONFIG_SR_320        = 0x0000;
+const CONFIG_SR_75         = 0x0100;
+const CONFIG_SR_110        = 0x0200;
+const CONFIG_SR_260        = 0x0300;
+const CONFIG_INT_OSC       = 0x0000;
+const CONFIG_OC_SD         = 0x0080;
+const CONFIG_VSCOMP        = 0x0020;
+const CONFIG_SW_USER       = 0x0010;
+const CONFIG_EXT_CLK       = 0x0008;
+
+const STEP_MODE_SYNC    = 0x80;
+const STEP_SEL_FULL     = 0x00;
+const STEP_SEL_HALF     = 0x01;
+const STEP_SEL_1_4      = 0x02;
+const STEP_SEL_1_8      = 0x03;
+const STEP_SEL_1_16     = 0x04;
+const STEP_SEL_1_32     = 0x05;
+const STEP_SEL_1_64     = 0x06;
+const STEP_SEL_1_128    = 0x06;
+
+const CMD_NOP		 	= 0x00;
+const CMD_GOHOME		= 0x70;
+const CMD_GOMARK		= 0x78;
+const CMD_RESET_POS	    = 0xD8;
+const CMD_RESET		    = 0xC0;
+const CMD_RUN           = 0x50;
+const CMD_SOFT_STOP	    = 0xB0;
+const CMD_HARD_STOP	    = 0xB8;
+const CMD_SOFT_HIZ		= 0xA0;
+const CMD_HARD_HIZ		= 0xA8;
+const CMD_GETSTATUS	    = 0xD0;	 
+const CMD_GETPARAM      = 0x20;
+const CMD_SETPARAM      = 0x00;
+
+const REG_ABS_POS 		= 0x01;
+const REG_EL_POS 		= 0x02;
+const REG_MARK			= 0x03;
+const REG_SPEED		    = 0x04;
+const REG_ACC			= 0x05;
+const REG_DEC			= 0x06;
+const REG_MAX_SPD 		= 0x07;
+const REG_MIN_SPD 		= 0x08;
+const REG_KVAL_HOLD 	= 0x09;
+const REG_KVAL_RUN 	    = 0x0A;
+const REG_KVAL_ACC 	    = 0x0B;
+const REG_KVAL_DEC 	    = 0x0C;
+const REG_INT_SPD		= 0x0D;
+const REG_ST_SLP		= 0x0E;
+const REG_FN_SLP_ACC	= 0x0F;
+const REG_FN_SLP_DEC	= 0x10;
+const REG_K_THERM		= 0x11;
+const REG_ADC_OUT		= 0x12;
+const REG_OCD_TH		= 0x13;
+const REG_STALL_TH		= 0x13;
+const REG_STEP_MODE	    = 0x14;
+const REG_FS_SPD		= 0x15;
+const REG_STEP_MODE 	= 0x16;
+const REG_ALARM_EN		= 0x17;
+const REG_CONFIG 		= 0x18;
+const REG_STATUS 		= 0x19;
 
 class L6470 {
-
-	static CMD_NOP		 	= 0x00;
-	static CMD_GOHOME		= 0x70;
-	static CMD_GOMARK		= 0x78;
-	static CMD_RESET_POS	= 0xD8;
-	static CMD_RESET		= 0xC0;
-	static CMD_RUN          = 0x50;
-	static CMD_SOFT_STOP	= 0xB0;
-	static CMD_HARD_STOP	= 0xB8;
-	static CMD_SOFT_HIZ		= 0xA0;
-	static CMD_HARD_HIZ		= 0xA8;
-	static CMD_GETSTATUS	= 0xD0;	 
-	static CMD_GETPARAM     = 0x20;
-	static CMD_SETPARAM     = 0x00;
-
-	static REG_ABS_POS 		= 0x01;
-	static REG_EL_POS 		= 0x02;
-	static REG_MARK			= 0x03;
-	static REG_SPEED		= 0x04;
-	static REG_ACC			= 0x05;
-	static REG_DEC			= 0x06;
-	static REG_MAX_SPD 		= 0x07;
-	static REG_MIN_SPD 		= 0x08;
-	static REG_KVAL_HOLD 	= 0x09;
-	static REG_KVAL_RUN 	= 0x0A;
-	static REG_KVAL_ACC 	= 0x0B;
-	static REG_KVAL_DEC 	= 0x0C;
-	static REG_INT_SPD		= 0x0D;
-	static REG_ST_SLP		= 0x0E;
-	static REG_FN_SLP_ACC	= 0x0F;
-	static REG_FN_SLP_DEC	= 0x10;
-	static REG_K_THERM		= 0x11;
-	static REG_ADC_OUT		= 0x12;
-	static REG_OC_TH		= 0x13;
-	static REG_STALL_TH		= 0x13;
-	static REG_STEP_MODE	= 0x14;
-	static REG_FS_SPD		= 0x15;
-	static REG_STEP_MODE 	= 0x16;
-	static REG_ALARM_EN		= 0x17;
-	static REG_CONFIG 		= 0x18;
-	static REG_STATUS 		= 0x19;
 
 	spi 	= null;
 	cs_l 	= null;
@@ -56,7 +92,8 @@ class L6470 {
 
 	function handleFlag() {
 		if (!flag_l.read()) { server.log("L6470 set flag"); }
-		server.log("L6470 unset flag");
+		else { server.log("L6470 unset flag"); }
+        server.log(format("Status Register: 0x%04x", getStatus()));
 	}
 
 	constructor(_spi, _cs_l, _rst_l, _flag_l) {
@@ -104,14 +141,14 @@ class L6470 {
 		return read(2);
 	}
 	
-	function getConfig() {
-	    write(format("%c",CMD_GETPARAM | REG_CONFIG));
-		return read(2);
-	}
-	
 	function setConfig(val) {
 	    write(format("%c", CMD_SETPARAM | REG_CONFIG));
 	    write(format("%c%c", ((val & 0xff00) >> 8), (val & 0xff)));
+	}
+	
+	function getConfig() {
+	    write(format("%c",CMD_GETPARAM | REG_CONFIG));
+		return read(2);
 	}
 	
 	function setStepMode(val) {
@@ -119,19 +156,46 @@ class L6470 {
 	    write(format("%c", (val & 0xff)));
 	}
 	
-	function setMaxSpd(stepsPerSec) {
+	function getStepMode() {
+	    write(format("%c",CMD_GETPARAM | REG_STEP_MODE));
+		return read(1);
+	}
+	
+	function setMinSpeed(stepsPerSec) {
+	    local val = math.ceil(stepsPerSec * 0.065536).tointeger();
+	    if (val > 0x03FF) { val = 0x03FF; }
+	    write(format("%c", CMD_SETPARAM | REG_MIN_SPD));
+	    write(format("%c%c", ((val & 0xff00) >> 8), (val & 0xff)));
+	}
+	
+	function getMaxSpeed() {
+	    write(format("%c",CMD_GETPARAM | REG_MIN_SPD));
+		return read(2);
+	}
+	
+	function setMaxSpeed(stepsPerSec) {
 	    local val = math.ceil(stepsPerSec * 0.065536).tointeger();
 	    if (val > 0x03FF) { val = 0x03FF; }
 	    write(format("%c", CMD_SETPARAM | REG_MAX_SPD));
 	    write(format("%c%c", ((val & 0xff00) >> 8), (val & 0xff)));
 	}
 	
-	function setFSSpd(stepsPerSec) {
-	    local val = math.ceil((stepsPerSec * 0x065536) - 0.5).tointeger();
+	function getMaxSpeed() {
+	    write(format("%c",CMD_GETPARAM | REG_MAX_SPD));
+		return read(2);
+	}
+	
+	function setFSSpeed(stepsPerSec) {
+	    local val = math.ceil((stepsPerSec * 0.065536) - 0.5).tointeger();
 	    if (val > 0x03FF) { val = 0x03FF; }
 	    fs_speed = val;
 	    write(format("%c", CMD_SETPARAM | REG_FS_SPD));
 	    write(format("%c%c", ((val & 0xff00) >> 8), (val & 0xff)));
+	}
+	
+	function getFSSpeed() {
+	    write(format("%c",CMD_GETPARAM | REG_FS_SPD));
+		return read(2);
 	}
 	
 	function setAcc(stepsPerSecPerSec) {
@@ -141,8 +205,20 @@ class L6470 {
 	    write(format("%c%c", ((val & 0xff00) >> 8), (val & 0xff)));
 	}
 	
-	function setOcTh(val) {
-	    write(format("%c", CMD_SETPARAM | REG_OC_TH));
+	function setOcTh(threshold) {
+	    local val = math.floor(threshold / 375).tointeger();
+        if (val > 0x0f) { val = 0x0f; }
+	    write(format("%c", CMD_SETPARAM | REG_OCD_TH));
+	    write(format("%c", (val & 0xff)));
+	}
+	
+	function setHoldKval(val) {
+	    write(format("%c", CMD_SETPARAM | REG_KVAL_HOLD));
+	    write(format("%c", (val & 0xff)));
+	}
+	
+	function getHoldKval() {
+	    write(format("%c", CMD_GETPARAM | REG_KVAL_HOLD));
 	    write(format("%c", (val & 0xff)));
 	}
 	
@@ -151,10 +227,35 @@ class L6470 {
 	    write(format("%c", (val & 0xff)));
 	}
 	
+	function getRunKval() {
+	    write(format("%c", CMD_GETPARAM | REG_KVAL_RUN));
+	    write(format("%c", (val & 0xff)));
+	}
+	
+	function setAccKval(val) {
+	    write(format("%c", CMD_SETPARAM | REG_KVAL_ACC));
+	    write(format("%c", (val & 0xff)));
+	}
+	
+	function getAccKval() {
+	    write(format("%c", CMD_GETPARAM | REG_KVAL_ACC));
+	    write(format("%c", (val & 0xff)));
+	}	
+	
+	function setDecKval(val) {
+	    write(format("%c", CMD_SETPARAM | REG_KVAL_DEC));
+	    write(format("%c", (val & 0xff)));
+	}
+	
+	function getDecKval() {
+	    write(format("%c", CMD_GETPARAM | REG_KVAL_DEC));
+	    write(format("%c", (val & 0xff)));
+	}
+	
 	function run(fwd = true, speed = 0) {
 	    local cmd = CMD_RUN;
 	    if (fwd) { cmd = CMD_RUN | 0x01; }
-	    if (speed == 0) { speed = fs_speed; } 
+	    if (speed == 0) { speed = fs_speed; }
 	    write(format("%c%c%c%c", cmd, speed & 0xff, (speed & 0xff00) >> 8, (speed & 0xff0000) >> 16));
 	}
 	
@@ -177,24 +278,19 @@ rst_l.configure(DIGITAL_OUT);
 flag_l.configure(DIGITAL_IN);
 
 motor <- L6470(spi, cs_l, rst_l, flag_l);
-server.log(format("Status Register: 0x%04x", motor.getStatus()));
-server.log(format("Config Register: 0x%04x", motor.getConfig()));
 
-motor.setStepMode(0x04); // sync disabled, pwm divisor 1, pwm multiplier 2
-motor.setMaxSpd(400); // steps per sec
-motor.setFSSpd(50); // steps per sec
+motor.setStepMode(STEP_SEL_1_64); // sync disabled, pwm divisor 1, pwm multiplier 2
+motor.setMaxSpeed(STEPS_PER_REV); // steps per sec
+motor.setFSSpeed(STEPS_PER_REV); // steps per sec
 motor.setAcc(0x0fff); // max
-motor.setOcTh(0x0f); // 6A
-motor.setConfig(0x1c00);
-motor.setRunKval(0xff);
+motor.setOcTh(6000); // 6A
+motor.setConfig(CONFIG_INT_OSC | CONFIG_PWMMULT_2_000);
+motor.setRunKval(0xff); // set Vs divisor to 1
 
+server.log(format("Status Register: 0x%04x", motor.getStatus()));
 server.log(format("Config Register: 0x%04x", motor.getConfig()));
 
 motor.run();
-server.log("motor running.");
-server.log(format("Status Register: 0x%04x", motor.getStatus()));
 imp.wakeup(3, function() {
     motor.stop();
-    server.log(format("Status Register: 0x%04x", motor.getStatus()));
-    server.log("motor stopped.");
 });
