@@ -252,6 +252,41 @@ class L6470 {
 	    write(format("%c", (val & 0xff)));
 	}
 	
+	function setAbsPos(pos) {
+        write(format("%c%c", CMD_SETPARAM | REG_ABS_POS, pos & 0xff));
+	}
+	
+	function getAbsPos() {
+	    write(format("%c", CMD_GETPARAM | REG_ABS_POS));
+	    return read(1);
+	}
+	
+	function setElPos(pos) {
+        write(format("%c%c", CMD_SETPARAM | REG_EL_POS, pos & 0xff));
+	}
+	
+	function getElPos() {
+	    write(format("%c", CMD_GETPARAM | REG_EL_POS));
+	    return read(1);
+	}
+	
+	function setMark(pos) {
+        write(format("%c%c", CMD_SETPARAM | REG_MARK, pos & 0xff));
+	}
+	
+	function getMark() {
+	    write(format("%c", CMD_GETPARAM | REG_MARK));
+	    return read(1);
+	}
+	
+	function hardHiZ() {
+	    write(format("%c", CMD_HARD_HIZ));
+	}
+	
+	function softHiZ() {
+	    write(format("%c", CMD_SOFT_HIZ));
+	}
+	
 	function run(fwd = true, speed = 0) {
 	    local cmd = CMD_RUN;
 	    if (fwd) { cmd = CMD_RUN | 0x01; }
