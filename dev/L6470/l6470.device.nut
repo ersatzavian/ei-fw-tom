@@ -43,6 +43,8 @@ const STEP_SEL_1_128    = 0x06;
 const CMD_NOP		 	= 0x00;
 const CMD_GOHOME		= 0x70;
 const CMD_GOMARK		= 0x78;
+const CMD_GOTO          = 0x60;
+const CMD_GOTO_DIR      = 0x68;
 const CMD_RESET_POS	    = 0xD8;
 const CMD_RESET		    = 0xC0;
 const CMD_RUN           = 0x50;
@@ -253,30 +255,30 @@ class L6470 {
 	}
 	
 	function setAbsPos(pos) {
-        write(format("%c%c", CMD_SETPARAM | REG_ABS_POS, pos & 0xff));
+        write(format("%c%c%c%c", CMD_SETPARAM | REG_ABS_POS, (pos & 0xff0000) >> 16, (pos & 0xff00) >> 8, pos & 0xff));
 	}
 	
 	function getAbsPos() {
 	    write(format("%c", CMD_GETPARAM | REG_ABS_POS));
-	    return read(1);
+	    return read(3);
 	}
 	
 	function setElPos(pos) {
-        write(format("%c%c", CMD_SETPARAM | REG_EL_POS, pos & 0xff));
+        write(format("%c%c%c", CMD_SETPARAM | REG_EL_POS, (pos & 0xff00) >> 8, pos & 0xff));
 	}
 	
 	function getElPos() {
 	    write(format("%c", CMD_GETPARAM | REG_EL_POS));
-	    return read(1);
+	    return read(2);
 	}
 	
 	function setMark(pos) {
-        write(format("%c%c", CMD_SETPARAM | REG_MARK, pos & 0xff));
+        write(format("%c%c%c%c", CMD_SETPARAM | REG_MARK, (pos & 0xff0000) >> 16, (pos & 0xff00) >> 8, pos & 0xff));
 	}
 	
 	function getMark() {
 	    write(format("%c", CMD_GETPARAM | REG_MARK));
-	    return read(1);
+	    return read(3);
 	}
 	
 	function hardHiZ() {
@@ -287,11 +289,41 @@ class L6470 {
 	    write(format("%c", CMD_SOFT_HIZ));
 	}
 	
-	function run(fwd = true, speed = 0) {
+	function goHome() {
+	    write(format("%c", CMD_GOHOME));
+	}
+	
+	function goMark() {
+	    write(format("%c", CMD_GOMARK));
+	}
+	
+	function move(fwd, num_steps) {
+	    local cmd = CMD_MOVE;
+	    if (fwd) { cmd = CMD_RUN | 0X01; }
+	    write(format("%c%c%c%c", cmd, (num_steps & 0xff0000) >> 16, (num_steps & 0xff00) >> 8, num_steps & 0xff));
+	}
+	
+	function goTo(pos, dir = null) {
+	    local cmd = CMD_GOTO;
+	    if (dir != null) {
+	        if (dir == 0) {
+    	        cmd = CMD_GOTO_DIR;
+	        } else {
+	            cmd = CMD_GOTO_DIR | 0x01;
+	        }
+	    }
+	    write(format("%c%c%c%c", cmd, (pos & 0xff0000) >> 16, (pos & 0xff00) >> 8, pos & 0xff));
+	}
+	
+	function run(fwd = 1, speed = 0) {
 	    local cmd = CMD_RUN;
 	    if (fwd) { cmd = CMD_RUN | 0x01; }
-	    if (speed == 0) { speed = fs_speed; }
-	    write(format("%c%c%c%c", cmd, speed & 0xff, (speed & 0xff00) >> 8, (speed & 0xff0000) >> 16));
+	    if (!speed) { speed = fs_speed; }
+	    else { 
+	        speed = math.ceil((speed * 0.065536) - 0.5).tointeger();
+	        if (speed > 0x03FF) { speed = 0x03FF; }
+	    }
+	    write(format("%c%c%c", cmd, (speed & 0xff00) >> 8, speed & 0xff));
 	}
 	
 	function stop() {
@@ -315,7 +347,7 @@ flag_l.configure(DIGITAL_IN);
 motor <- L6470(spi, cs_l, rst_l, flag_l);
 
 motor.setStepMode(STEP_SEL_1_64); // sync disabled, pwm divisor 1, pwm multiplier 2
-motor.setMaxSpeed(STEPS_PER_REV); // steps per sec
+motor.setMaxSpeed(10 * STEPS_PER_REV); // steps per sec
 motor.setFSSpeed(STEPS_PER_REV); // steps per sec
 motor.setAcc(0x0fff); // max
 motor.setOcTh(6000); // 6A
@@ -325,7 +357,20 @@ motor.setRunKval(0xff); // set Vs divisor to 1
 server.log(format("Status Register: 0x%04x", motor.getStatus()));
 server.log(format("Config Register: 0x%04x", motor.getConfig()));
 
-motor.run();
-imp.wakeup(3, function() {
+motor.run(0, STEPS_PER_REV);
+imp.wakeup(2.5, function() {
     motor.stop();
+    motor.softHiZ();
+    server.log(format("Absolute position: 0x%02x",motor.getAbsPos()));
+    server.log(format("Mark position: 0x%02x",motor.getMark()));
+    motor.setMark(motor.getAbsPos());
+    server.log(format("New Mark position: 0x%02x",motor.getMark()));
+    motor.goHome();
+    imp.wakeup(0.5, function() {
+        motor.goTo(motor.getMark());
+        imp.wakeup(0.2, function() {
+            motor.stop();
+            motor.softHiZ();
+        });
+    });
 });
