@@ -46,9 +46,6 @@ class Recorder {
 
     // helper: clean up after stopping the sampler
     function finish() {        
-        // reconfigure the sampler to free the memory allocated for sampler buffers
-        hardware.sampler.configure(mic, samplerate, [blob(2),blob(2),blob(2)], samplesReady.bindenv(this), sampleroptions);
-
         // signal to the agent that we're ready to upload this new message
         // the agent will call back with a "pull" request, at which point we'll read the buffer out of flash and upload
         agent.send("done", 0);
