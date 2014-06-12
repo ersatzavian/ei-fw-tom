@@ -132,7 +132,7 @@ device.on("pull", function(buffer_len) {
     buffer_index = ((agent_buffer.tell() - inParams.data_chunk_offset) / buffer_len) + 1;
     
     if (buffer_index > num_buffers) {
-        // just let the device finish what we've already given it
+        // just let the device finish what we've already given itd
         return;
     }
     
