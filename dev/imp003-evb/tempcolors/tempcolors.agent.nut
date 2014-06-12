@@ -72,6 +72,13 @@ function getConditions() {
     }
 }
 
+function test() {
+    for (local i = 0.0; i < 40.0; i++) {
+        device.send("setcolor",tempToColor(i));
+        imp.sleep(0.25);
+    }
+}
+
 http.onrequest(function(req, resp) {
     resp.header("Access-Control-Allow-Origin", "*");
     resp.send(200, "Electric Imp Weather Agent");
@@ -88,7 +95,4 @@ imp.wakeup(5, function() {
     if (AGENTRELOADED) { getConditions(); }
 });
 
-for (local i = 0.0; i < 40.0; i++) {
-    device.send("setcolor",tempToColor(i));
-    imp.sleep(0.25);
-}
+test();
