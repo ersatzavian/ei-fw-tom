@@ -10,14 +10,8 @@ updatehandle <- null;
 // Add your own wunderground API Key here. 
 // Register for free at http://api.wunderground.com/weather/api/
 const WUNDERGROUND_KEY = "d1eb2bb13733a5f5";
-local WUNDERGROUND_URL = "http://api.wunderground.com/api/";
-local ZIPCODE = "94041";
-
-savedata <- server.load();
-if ("zipcode" in savedata) { 
-    ZIPCODE = savedata.locationstr;
-    server.log("Restored Location: "+ZIPCODE);
-} 
+const WUNDERGROUND_URL = "http://api.wunderground.com/api/";
+const ZIPCODE = "94041";
 
 // calculate the color that corresponds to a given temperature
 // assumes temperature in celsius
@@ -45,8 +39,6 @@ function tempToColor(temp) {
 
 // Use weatherunderground to get the conditions, latitude and longitude given a location string.
 function getConditions() {
-    return;
-    
     // prevent double-scheduled updates (in case both device and agent restart at some point)
     if (updatehandle) { imp.cancelwakeup(updatehandle); }
     
@@ -78,11 +70,6 @@ function test() {
         imp.sleep(0.25);
     }
 }
-
-http.onrequest(function(req, resp) {
-    resp.header("Access-Control-Allow-Origin", "*");
-    resp.send(200, "Electric Imp Weather Agent");
-});
 
 // handle device restarts while agent carries on running
 device.on("start", function(val) {
