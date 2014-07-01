@@ -54,5 +54,5 @@ Note that failing to include the offset by minimum address will create an obscen
 Include the file length and source url as query parameters:
 
 ```
-14:20:12-tom$ curl --data-binary @blinky.bin https://agent.electricimp.com/<ID>/fetch?len=2268&addr=<my_server>/blinky.bin
+14:20:12-tom$ curl https://agent.electricimp.com/<ID>/fetch?len=<image length in bytes>&addr=<image url>
 ```
