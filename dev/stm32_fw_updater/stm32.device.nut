@@ -22,7 +22,7 @@ function hexdump(data) {
 }
 
 class Stm32 {
-    static FLASH_START_ADDR = 0x08080000;
+    static FLASH_BASE_ADDR  = 0x08080000;
     static INIT_TIME        = 0.1; // ms, 85 ms min for V3.X
     static UART_CONN_TIME   = 0.010; // ms, two byte times plus configuration time
     static ACK_TIMEOUT      = 10000; // µs
@@ -45,6 +45,7 @@ class Stm32 {
     bootloader_version = null;
     supported_cmds = [];
     pid = null;
+    flash_ptr = 0;
     
     uart = null;
     nrst = null;
@@ -56,6 +57,7 @@ class Stm32 {
         nrst = _nrst;
         boot0 = _boot0;
         if (_boot1) { boot1 = _boot1; }
+        flash_ptr = FLASH_BASE_ADDR;
     }
     
     // Helper function: clear the UART RX FIFO by reading out any remaining data
@@ -144,6 +146,28 @@ class Stm32 {
         throw "Timed out waiting for ACK";
     }
     
+    // set the class's internal pointer for the current address in flash
+    // this allows functions outside the class to start at 0 and ignore the flash base address
+    // Input: relative position of flash memory pointer (integer)
+    // Return: None
+    function set_flash_ptr(addr) {
+        flash_ptr = addr + FLASH_BASE_ADDR;
+    }
+    
+    // get the relative position of the current address in flash
+    // Input: None
+    // Return: relative position of flash memory pointer (integer)
+    function get_flash_ptr() {
+        return flash_ptr - FLASH_BASE_ADDR;
+    }
+    
+    // get the base address of flash memory
+    // Input: None
+    // Return: flash base address (integer)
+    function get_flash_base_addr() {
+        return FLASH_BASE_ADDR;
+    }
+    
     // Reset the STM32 to bring it out of USART bootloader
     // Releases the boot0 pin, then toggles reset
     // Input: None
@@ -169,6 +193,8 @@ class Stm32 {
         nrst.write(1);
         // bootloader will take a little time to come up
         imp.sleep(INIT_TIME);
+        // release boot0 so we don't wind up back in the bootloader on our next reset
+        boot0.write(0);
         // send a command to initialize the bootloader on this UART
         clear_uart();
         uart.write(INIT);
@@ -255,11 +281,13 @@ class Stm32 {
     // Input: 
     //      addr: 4-byte address
     // Return: None
-    function cmd_go(addr) {
+    function cmd_go(addr = null) {
         clear_uart()
         uart.write(format("%c%c",CMD_GO, (~CMD_GO) & 0xff));
         get_ack();
         // GO command ACKs, then waits for starting address
+        // if no address was given, assume image starts at the beginning of the flash
+        if (addr == null) { addr = FLASH_BASE_ADDR); }
         local addrblob = blob(5);
         addrblob.writen(addr,'i');
         addrblob.swap4(); // STM32 wants MSB-first. Imp is LSB-first.
@@ -274,12 +302,13 @@ class Stm32 {
     //      addr: 4-byte starting address
     //      data: data to write (0 to 256 bytes, blob)
     // Return: None
-    function cmd_wr_mem(addr, data) {
+    function cmd_wr_mem(data, addr = null) {
         clear_uart();
         uart.write(format("%c%c",CMD_WR_MEMORY, (~CMD_WR_MEMORY) & 0xff));
         get_ack();
         // read mem command ACKs, then waits for starting memory address
         local addrblob = blob(5);
+        if (addr == null) { addr = flash_ptr; }
         addrblob.writen(addr,'i');
         addrblob.swap4(); // STM32 wants MSB-first. Imp is LSB-first.
         wr_checksum(addrblob);
@@ -428,7 +457,7 @@ class Stm32 {
     // System reset is generated at end of command to apply the new configuration
     // Input: None
     // Return: None
-    function wr_unprot(sectors, sector_codes) {
+    function wr_unprot() {
         clear_uart();
         uart.write(format("%c%c",CMD_WR_UNPROT, (~CMD_WR_UNPROT) & 0xff));
         get_ack();
@@ -463,6 +492,54 @@ class Stm32 {
 }
 
 // AGENT CALLBACKS -------------------------------------------------------------
+
+// Allow the agent to put the stm32 in bootloader mode
+agent.on("bootloader", function(dummy) {
+    stm32.enter_bootloader();
+});
+
+// Allow the agent to reset the stm32 to normal operation
+agent.on("reset", function(dummy) {
+    stm32.reset();
+});
+
+fw_len <- null;
+// Initiate an application firmware update
+agent.on("load_fw", function(len) {
+    fw_len = len;
+    stm32.enter_bootloader();
+    server.log("FW Update: Enabling Flash Write.");
+    stm32.wr_unprot();
+    server.log("FW Update: Erasing Flash Bank 1.");
+    stm32.bank_1_erase();
+    server.log("FW Update: Starting Download.");
+    agent.send("pull", BUFFERSIZE);
+});
+
+// used to load new application firmware; device sends a block of data to the stm32,
+// then requests another block from the agent with "pull". Agent responds with "push".
+agent.on("push", function(buffer) {
+    buffer.seek(0,'b');
+    local data = blob(256);
+    while (!buffer.eos()) {
+        local bytes_left_this_buffer = buffer.len() - buffer.tell()
+        if (bytes_left_this_buffer > 256) { data = buffer.readblob(256); }
+        else { data = buffer.readblob(bytes_left_this_buffer); }
+        stm32.cmd_wr_mem(data);
+    }
+    
+    local bytes_left_total = fw_len - stm32.get_flash_ptr();
+    local next_buffer_size = bytes_left_total > BUFFERSIZE ? BUFFERSIZE : bytes_left_total;
+    
+    if (next_buffer_size == 0) {
+        server.log("FW Update: Complete, Starting.");
+        fw_len = 0;
+        stm32.cmd_go();
+    } else {
+        agent.send("pull", next_buffer_size);
+        server.log(format("FW Update: loaded %d / %d",stm32.get_flash_ptr(),fw_len));
+    }
+});
 
 
 // MAIN ------------------------------------------------------------------------
@@ -512,7 +589,7 @@ local addr = 0x20002000;
 local len = 248;
 local mem_contents = stm32.cmd_rd_mem(addr, len);
 server.log(format("Got %d bytes of data starting at %02x ", mem_contents.len(), addr));
-//hexdump(mem_contents);
+hexdump(mem_contents);
 
 imp.wakeup(1, function() {
     server.log("Resetting STM32");
