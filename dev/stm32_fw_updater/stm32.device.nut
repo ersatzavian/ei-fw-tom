@@ -611,8 +611,8 @@ agent.on("push", function(buffer) {
     if (next_buffer_size == 0) {
         server.log("FW Update: Complete, Resetting");
         fw_len = 0;
-        //stm32.cmd_go();
-        stm32.reset();
+        stm32.cmd_go();
+        //stm32.reset();
         agent.send("fw_update_complete", true);
     } else {
         agent.send("pull", next_buffer_size);
