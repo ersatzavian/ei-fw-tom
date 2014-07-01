@@ -4,7 +4,28 @@ This class allows you to connect an Electric Imp to an external STM32 processor 
 
 This class implements the command set detailed in [ST AN3155](http://www.st.com/web/en/resource/technical/document/application_note/CD00264342.pdf).
 
-##Updating Application Code on the STM32 with the Imp
+## Hardware
+
+To use this class, you'll need to connect one of the Imp's UARTs to one of the STM32's bootloader-compatible USARTs. Note that not all of the STM32's USARTs are available for use by the bootloader. 
+
+You'll also need to connect any two Imp pins to BOOT0 and NRST on the STM32. If BOOT1 on the STM32 is not strapped to the correct value to allow the device to enter bootloader mode, you'll need to connect that to any Imp pin as well, and provide it to the Stm32 constructor.
+
+If you're using the STM32F4-Discovery board, you can connect it up with an April board as I did:
+
+| April Pin | STM32 Discovery Board Pin | Description |
+| --------- | ------------------------- | ----------- |
+| VIN | 5V | Power for April / Imp |
+| GND | GND | Ground |
+| Pin5 | PB11 | Imp TX / STM32 RX (USART3) |
+| Pin7 | PB10 | Imp RX / STM32 TX (USART3) |
+| Pin8 | NRST | STM32 Reset, Active-Low |
+| Pin9 | BOOT0 | STM32 BOOT0 |
+
+Note: 
+- You cannot use STM32 USART1 on the STM32F4 Discovery board because the required pins are already in use on the discovery board
+- You cannot use STM32 USART2 on the STM32F4 Discovery board because the STM32F4 does not support USART bootloader on USART2
+
+## Updating Application Code on the STM32 with the Imp
 
 ### Convert 
 
