@@ -297,7 +297,10 @@ class Stm32 {
         addrblob.writen(addr,'i');
         addrblob.swap4(); // STM32 wants MSB-first. Imp is LSB-first.
         wr_checksum(addrblob);
-        uart.write(addrblob);
+        uart.write(addrblob);        
+        if (!get_ack()) {
+            throw format("Got NACK on WR_MEMORY for addr %08x (invalid address)",addr);
+        };
     }
     
     // Write data to any valid memory address (RAM, Flash, Option Byte Area, etc.)
@@ -608,7 +611,8 @@ agent.on("push", function(buffer) {
     if (next_buffer_size == 0) {
         server.log("FW Update: Complete, Resetting");
         fw_len = 0;
-        stm32.cmd_go();
+        //stm32.cmd_go();
+        stm32.reset();
         agent.send("fw_update_complete", true);
     } else {
         agent.send("pull", next_buffer_size);
@@ -692,7 +696,7 @@ server.log(format("Got %d bytes of data starting at %08x ", mem_contents.len(), 
 hexdump(mem_contents);
 */
 
-//imp.wakeup(1, function() {
-//    server.log("Resetting STM32");
-//    stm32.reset();
-//});
+imp.wakeup(1, function() {
+    stm32.reset();
+    server.log("STM32 Reset");
+});
