@@ -597,7 +597,7 @@ agent.on("push", function(buffer) {
     local data = blob(256);
     while (!buffer.eos()) {
         local bytes_left_this_buffer = buffer.len() - buffer.tell()
-        server.log(format("%d bytes left in current buffer. Flash pointer at %d",bytes_left_this_buffer,stm32.get_flash_ptr()));
+        //server.log(format("%d bytes left in current buffer. Flash pointer at %d",bytes_left_this_buffer,stm32.get_flash_ptr()));
         if (bytes_left_this_buffer > 256) { data = buffer.readblob(256); }
         else { data = buffer.readblob(bytes_left_this_buffer); }
         stm32.cmd_wr_mem(data);
@@ -611,7 +611,9 @@ agent.on("push", function(buffer) {
     if (next_buffer_size == 0) {
         server.log("FW Update: Complete, Resetting");
         fw_len = 0;
+        // can use the GO command to jump right into flash and run
         stm32.cmd_go();
+        // Or, you can just reset the device and it'll come up and run the new application code
         //stm32.reset();
         agent.send("fw_update_complete", true);
     } else {
@@ -634,15 +636,6 @@ boot0.write(1);
 uart.configure(BAUD, 8, PARITY_EVEN, 1, NO_CTSRTS);
 
 stm32 <- Stm32(uart, nrst, boot0);
-
-/*
-local myblob = blob(5);
-myblob.writen(0x06,'b');
-myblob.writen(0x04,'b');
-myblob.writen(0x01,'b');
-myblob.writen(0x01,'b');
-stm32.wr_checksum(myblob);
-*/
 
 // reset the STM32 and bring it up in bootloader mode
 stm32.enter_bootloader();
