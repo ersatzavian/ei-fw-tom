@@ -6,7 +6,7 @@
 // GLOBALS AND CONSTS ----------------------------------------------------------
 
 const BUFFERSIZE = 8192; // bytes per buffer of data sent from agent
-const BAUD = 9600; // any standard baud between 9600 and 115200 is allowed
+const BAUD = 115200; // any standard baud between 9600 and 115200 is allowed
                     // exceeding 38400 is not recommended as the STM32 may overrun the imp's RX FIFO
 BYTE_TIME <- 8.0 / (BAUD * 1.0);
 
@@ -85,14 +85,17 @@ class Stm32 {
     // Return: RX'd data (blob)
     function read_uart(num_bytes) {
         local result = blob(num_bytes);
-        local start = hardware.micros();
+        local start = hardware.millis();
+        local pos = result.tell();
+        local timeout = 10 * BYTE_TIME * num_bytes * 1000;
         while (result.tell() < num_bytes) {
-            if (hardware.micros() - start > TIMEOUT) {
-                throw format("Timed out waiting for data, got %d / %d bytes",result.tell(),num_bytes);
+            if (hardware.millis() - start > timeout) {
+                throw format("Timed out waiting for data, got %d / %d bytes",pos,num_bytes);
             }
             local byte = uart.read();
             if (byte != -1) {
                 result.writen(byte,'b');
+                pos++;
             }
         }
         return result;
@@ -266,7 +269,7 @@ class Stm32 {
         if (!bootloader_active) { enter_bootloader(); }
         clear_uart();
         uart.write(format("%c%c",CMD_RD_MEMORY, (~CMD_RD_MEMORY) & 0xff));
-        get_ack();
+        get_ack(TIMEOUT_CMD);
         // read mem command ACKs, then waits for starting memory address
         local addrblob = blob(5);
         addrblob.writen(addr,'i');
@@ -612,7 +615,6 @@ agent.on("push", function(buffer) {
     
     local bytes_left_total = fw_len - stm32.get_mem_ptr();
     local next_buffer_size = bytes_left_total > BUFFERSIZE ? BUFFERSIZE : bytes_left_total;
-    server.log(format("%d total bytes remaining, next buffer %d bytes",bytes_left_total,next_buffer_size));
     imp.sleep(0.5)
     
     if (next_buffer_size == 0) {
