@@ -51,8 +51,8 @@ Note that failing to include the offset by minimum address will create an obscen
 
 ### Tell the agent to fetch the file
 
-Include the file length and source url as query parameters:
+Include the source url as query parameter:
 
 ```
-14:20:12-tom$ curl https://agent.electricimp.com/<ID>/fetch?len=<image length in bytes>&addr=<image url>
+14:20:12-tom$ curl https://agent.electricimp.com/<ID>/fetch?url=<image url>
 ```

@@ -66,20 +66,25 @@ http.onrequest(function(req, res) {
         res.send(200, "OK");
     } else if (req.path == "/fetch" || req.path == "/fetch/") {
         local fw_len = 0;
-        if ("len" in req.query) {
-            fw_len = req.query.len.tointeger();
-        } else {
-            res.send(400, "Request must include length as query parameter (&len=<length in bytes>)");
-            return;
-        }
         if ("url" in req.query) {
             fetch_url = req.query.url;
             fetch_ptr = 0;
+        } else {
+            res.send(400, "Request must include source url for image file");
+        }
+        // get the content-length header from the remote URL to determine the image size
+        local resp = http.get(fetch_url, { Range=format("bytes=0-0") }).sendsync();
+        foreach (key, value in resp.headers) {
+            server.log(key+" : "+value);
+        }
+        if ("content-length" in resp.headers) {
+            fw_len = split(resp.headers["content-range"],"/")[1].tointeger();
+            server.log(format("Fetching new firmware (%d bytes) from %s",fw_len,fetch_url));
             device.send("load_fw", fw_len);
             res.send(200, "OK");
-            server.log(format("Fetching new firmware (%d bytes) from %s",fw_len,fetch_url));
         } else {
-            res.send(400, "Request must include source url to fetch image from.");
+            res.send(400, "No content-length header from "+fetch_url);
+            return;
         }
     } else {
         // send a response to prevent request hang
