@@ -50,6 +50,7 @@ class Stm32 {
     static FLASH_BASE_ADDR  = 0x08000000;
 
     bootloader_version = null;
+    bootloader_active = false;
     supported_cmds = [];
     pid = null;
     mem_ptr = 0;
@@ -124,7 +125,6 @@ class Stm32 {
         imp.sleep(BYTE_TIME * 2);
         local num_bytes = uart.read() + 0;
         if (cmd == CMD_GET_ID) {num_bytes++;} // GET_ID command responds w/ number of bytes in ID - 1.
-        server.log(format("%02x: Receiving %d bytes", cmd, num_bytes));
         imp.sleep(BYTE_TIME * (num_bytes + 4));
         
         local result = blob(num_bytes);
@@ -180,6 +180,7 @@ class Stm32 {
     // Input: None
     // Return: None
     function reset() {
+        bootloader_active = false;
         nrst.write(0);
         // release boot0 so we don't come back up in USART bootloader mode
         boot0.write(0);
@@ -209,6 +210,7 @@ class Stm32 {
         local response = uart.read() + 0;
         if (response == ACK) {
             // USART bootloader successfully configured
+            bootloader_active = true;
             return;
         } else {
             throw "Failed to configure USART Bootloader, got "+response;
@@ -225,8 +227,11 @@ class Stm32 {
     function cmd_get() {
         // only request info from the device if we don't already have it
         if (bootloader_version == null || supported_cmds.len() == 0) {
+            // make sure the bootloader is active; allows us to call this method directly from outside the class
+            if (!bootloader_active) { enter_bootloader(); }
             local result = send_cmd(CMD_GET);
             bootloader_version = result.readn('b');
+            bootloader_version = format("%d.%d",((bootloader_version & 0xf0) >> 4),(bootloader_version & 0x0f)).tofloat();
             while (!result.eos()) {
                 local byte  = result.readn('b');
                 supported_cmds.push(byte);
@@ -241,7 +246,10 @@ class Stm32 {
     // Input: None
     // Return: pid (2 bytes)
     function cmd_get_id() {
+        // just return the value if we already know it
         if (pid == null) {
+            // make sure bootloader is active before sending command
+            if (!bootloader_active) { enter_bootloader(); }
             local result = send_cmd(CMD_GET_ID);
             pid = result.readn('w');
         }
@@ -255,6 +263,7 @@ class Stm32 {
     // Return: 
     //      memory contents from addr to addr+len (blob)
     function cmd_rd_mem(addr, len) {
+        if (!bootloader_active) { enter_bootloader(); }
         clear_uart();
         uart.write(format("%c%c",CMD_RD_MEMORY, (~CMD_RD_MEMORY) & 0xff));
         get_ack();
@@ -289,6 +298,7 @@ class Stm32 {
     //      addr: 4-byte address
     // Return: None
     function cmd_go(addr = null) {
+        if (!bootloader_active) { enter_bootloader(); }
         clear_uart()
         uart.write(format("%c%c",CMD_GO, (~CMD_GO) & 0xff));
         get_ack(TIMEOUT_CMD);
@@ -303,6 +313,8 @@ class Stm32 {
         if (!get_ack(TIMEOUT_CMD)) {
             throw format("Write Failed for addr %08x (invalid address)",addr);
         };
+        // system will now exit bootloader and jump into application code
+        bootloader_active = false;
     }
     
     // Write data to any valid memory address (RAM, Flash, Option Byte Area, etc.)
@@ -313,6 +325,7 @@ class Stm32 {
     //      data: data to write (0 to 256 bytes, blob)
     // Return: None
     function cmd_wr_mem(data, addr = null) {
+        if (!bootloader_active) { enter_bootloader(); }
         local len = data.len();
         clear_uart();
         uart.write(format("%c%c",CMD_WR_MEMORY, (~CMD_WR_MEMORY) & 0xff));
@@ -350,6 +363,7 @@ class Stm32 {
     //      page_codes (array)
     // Return: None
     function erase_mem(num_pages, page_codes) {
+        if (!bootloader_active) { enter_bootloader(); }
         clear_uart();
         uart.write(format("%c%c",CMD_ERASE, (~CMD_ERASE) & 0xff));
         get_ack(TIMEOUT_CMD);
@@ -371,6 +385,7 @@ class Stm32 {
     // Input: None
     // Return: None
     function erase_global_mem() {
+        if (!bootloader_active) { enter_bootloader(); }
         clear_uart();
         uart.write(format("%c%c",CMD_ERASE, (~CMD_ERASE) & 0xff));
         get_ack(TIMEOUT_CMD);
@@ -388,6 +403,7 @@ class Stm32 {
     //      page_codes (array of 2-byte codes)
     // Return: None
     function ext_erase_mem(addr, len) {
+        if (!bootloader_active) { enter_bootloader(); }
         clear_uart();
         uart.write(format("%c%c",CMD_EXT_ERASE, (~CMD_EXT_ERASE) & 0xff));
         get_ack(TIMEOUT_CMD);
@@ -410,6 +426,7 @@ class Stm32 {
     // Input: None
     // Return: None
     function mass_erase() {
+        if (!bootloader_active) { enter_bootloader(); }
         clear_uart();
         uart.write(format("%c%c",CMD_EXT_ERASE, (~CMD_EXT_ERASE) & 0xff));
         get_ack(TIMEOUT_CMD);
@@ -425,6 +442,7 @@ class Stm32 {
     // Input: None
     // Return: None
     function bank1_erase() {
+        if (!bootloader_active) { enter_bootloader(); }
         clear_uart();
         uart.write(format("%c%c",CMD_EXT_ERASE, (~CMD_EXT_ERASE) & 0xff));
         get_ack(TIMEOUT_CMD);
@@ -438,6 +456,7 @@ class Stm32 {
     // Input: None
     // Return: None    
     function bank2_erase() {
+        if (!bootloader_active) { enter_bootloader(); }
         clear_uart();
         uart.write(format("%c%c",CMD_EXT_ERASE, (~CMD_EXT_ERASE) & 0xff));
         get_ack(TIMEOUT_CMD);
@@ -454,6 +473,7 @@ class Stm32 {
     //      sector_codes: (1-byte integer array) sector codes of sectors to protect
     // Return: None
     function wr_prot(num_sectors, sector_codes) {
+        if (!bootloader_active) { enter_bootloader(); }
         clear_uart();
         uart.write(format("%c%c",CMD_WR_PROT, (~CMD_WR_PROT) & 0xff));
         get_ack(TIMEOUT_CMD);
@@ -467,6 +487,10 @@ class Stm32 {
         if (!get_ack(TIMEOUT_PROTECT)) {
             throw "Write Protect Unprotect Failed (NACK)";
         }
+        // system will now reset
+        bootloader_active = false;
+        imp.sleep(INIT_TIME);
+        enter_bootloader();
     }
     
     // Disable write protection of all flash memory sectors
@@ -474,6 +498,7 @@ class Stm32 {
     // Input: None
     // Return: None
     function wr_unprot() {
+        if (!bootloader_active) { enter_bootloader(); }
         clear_uart();
         uart.write(format("%c%c",CMD_WR_UNPROT, (~CMD_WR_UNPROT) & 0xff));
         // first ACK acknowledges command
@@ -483,6 +508,7 @@ class Stm32 {
             throw "Write Unprotect Failed (NACK)"
         }
         // system will now reset
+        bootloader_active = false;
         imp.sleep(INIT_TIME);
         enter_bootloader();
     }
@@ -492,6 +518,7 @@ class Stm32 {
     // Input: None
     // Return: None
     function rd_prot() {
+        if (!bootloader_active) { enter_bootloader(); }
         clear_uart();
         uart.write(format("%c%c",CMD_RDOUT_PROT, (~CMD_RDOUT_PROT) & 0xff));
         // first ACK acknowledges command
@@ -501,6 +528,7 @@ class Stm32 {
             throw "Read Protect Failed (NACK)"
         }        
         // system will now reset
+        bootloader_active = false;
         imp.sleep(SYS_RESET_WAIT);
         enter_bootloader();
     }
@@ -510,6 +538,7 @@ class Stm32 {
     // Input: None
     // Return: None
     function rd_unprot() {
+        if (!bootloader_active) { enter_bootloader(); }
         clear_uart();
         uart.write(format("%c%c",CMD_RDOUT_UNPROT, (~CMD_RDOUT_UNPROT) & 0xff));
         // first ACK acknowledges command
@@ -519,6 +548,7 @@ class Stm32 {
             throw "Read Unprotect Failed (NACK)";
         }
         // system will now reset
+        bootloader_active = false;
         imp.sleep(INIT_TIME);
         enter_bootloader();
     }
@@ -527,14 +557,27 @@ class Stm32 {
 
 // AGENT CALLBACKS -------------------------------------------------------------
 
-// Allow the agent to put the stm32 in bootloader mode
-agent.on("bootloader", function(dummy) {
-    stm32.enter_bootloader();
+// Allow the agent to request that the device send its bootloader version and supported commands
+agent.on("get_version", function(dummy) {
+    agent.send("set_version",stm32.cmd_get());
+    if (stm32.bootloader_active) { stm32.reset(); }
+});
+
+// Allow the agent to request the device's PID
+agent.on("get_id", function(dummy) {
+    agent.send("set_id", stm32.cmd_get_id());
+    if (stm32.bootloader_active) { stm32.reset(); }
 });
 
 // Allow the agent to reset the stm32 to normal operation
 agent.on("reset", function(dummy) {
     stm32.reset();
+});
+
+// Allow the agent to remove readback protection from the flash
+// (give this a go if flash writes and erases mysteriously give you "invalid address")
+agent.on("rd_unprot", function(dumm) {
+    stm32.cmd_rd_unprot();
 });
 
 fw_len <- null;
@@ -544,9 +587,8 @@ agent.on("load_fw", function(len) {
     server.log(format("FW Update: %d bytes",fw_len));
     stm32.enter_bootloader();
     server.log("FW Update: Enabling Flash Write");
+    // Note that you do not always need to write unprotect; it's done here as a just-in-case
     stm32.wr_unprot();
-    // wr_unprotect causes a system reset, so we need to re-enter the bootloader
-    stm32.enter_bootloader();
     server.log("FW Update: Mass Erasing Flash");
     stm32.mass_erase();
     server.log("FW Update: Starting Download");
@@ -602,59 +644,4 @@ uart.configure(BAUD, 8, PARITY_EVEN, 1, NO_CTSRTS);
 
 stm32 <- Stm32(uart, nrst, boot0);
 
-// reset the STM32 and bring it up in bootloader mode
-stm32.enter_bootloader();
-server.log("STM32 in USART Bootloader Mode");
-
-// use the GET command to get the bootloader version and list of supported commands
-local bootloader_info = stm32.cmd_get();
-server.log(format("STM32 Bootloader Version: %02x",bootloader_info.bootloader_version));
-local supported_cmds_str = ""; 
-foreach (cmd in bootloader_info.supported_cmds) {
-    supported_cmds_str += format("%02x ",cmd);
-}
-server.log("Bootloader supports commands: " + supported_cmds_str);
-
-// use the GET_ID command to get the PID
-server.log("STM32 PID: "+stm32.cmd_get_id());
-
-//server.log("Disabling Readback Protection");
-//stm32.rd_unprot()
-//server.log("Readback Protection Disabled");
-
-// read back a bit of memory, to make sure that works
-// RAM: 0x20002000 - 0x2001ffff (version 3.1)
-// RAM: 0x20004000 - 0x2001ffff (version 9.1)
-// SYSTEM Mem: 0x1fff0000 - 0x1fff77ff (all versions)
-// Here, we read the option byte section. Bytes 15:0 show write protection
-//local addr = 0x1FFFC008;
-/*
-local addr = 0x08000000
-local len = 64;
-local mem_contents = stm32.cmd_rd_mem(addr, len);
-server.log(format("Got %d bytes of data starting at %02x ", mem_contents.len(), addr));
-hexdump(mem_contents);
-
-// test write unprotect
-stm32.wr_unprot();
-
-// test write
-local testblob = blob(16);
-while (!testblob.eos()) {
-    testblob.writen(0xAACC, 'w');
-}
-testblob.seek(0,'b');
-server.log("Testing Write by writing 16 bytes of 0xAACC to 0x0800 0000");
-stm32.cmd_wr_mem(testblob, addr);
-server.log("Write Complete, reading back to verify.");
-
-// verify write
-mem_contents = stm32.cmd_rd_mem(addr, len);
-server.log(format("Got %d bytes of data starting at %08x ", mem_contents.len(), addr));
-hexdump(mem_contents);
-*/
-
-imp.wakeup(1, function() {
-    stm32.reset();
-    server.log("STM32 Reset");
-});
+server.log("Ready");

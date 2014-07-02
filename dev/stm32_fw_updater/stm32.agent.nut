@@ -30,6 +30,24 @@ device.on("fw_update_complete", function(success) {
     }
 });
 
+// Allow the device to inform us of its bootloader version and supported commands
+// This agent doesn't use this for anything; this method is here as an example
+device.on("set_version", function(data) {
+    server.log("Device Bootloader Version: "+data.bootloader_version);
+    local supported_cmds_str = ""; 
+    foreach (cmd in data.supported_cmds) {
+        supported_cmds_str += format("%02x ",cmd);
+    }
+    server.log("Bootloader supports commands: " + supported_cmds_str);
+});
+
+// Allow the device to inform the agent of its product ID (PID)
+// This agent doesn't use this for anything; this method is here as an example
+device.on("set_id", function(id) {
+    // use the GET_ID command to get the PID
+    server.log("STM32 PID: "+id);
+});
+
 // HTTP REQUEST HANDLER --------------------------------------------------------
 
 http.onrequest(function(req, res) {
@@ -72,3 +90,9 @@ http.onrequest(function(req, res) {
 // MAIN ------------------------------------------------------------------------
 
 server.log("Agent Started. Free Memory: "+imp.getmemoryfree());
+
+// in case both device and agent just booted, give device a moment to initialize, then get info
+imp.wakeup(0.5, function() {
+    device.send("get_version",0);
+    device.send("get_id",0);
+});
