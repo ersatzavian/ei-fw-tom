@@ -20,6 +20,7 @@ fw_len <- 0;
 filetype <- null;
 bin_ptr <- 0;
 bin_len <- 0;
+bytes_sent <- 0;
 
 // FUNCTION AND CLASS DEFINITIONS ----------------------------------------------
 
@@ -79,19 +80,17 @@ function parse_hexfile(hex) {
                     // Set the offset
                     offset = hextoint(line.slice(8, 12)); // << 16;
                     if (offset != 0) {
-                        server.log(format("Set offset to 0x%08X", offset));
-                        // right now, this will break the binary we're parsing to 
-                        // because the offset is relative to the entire binary image 
-                        // (and we're not holding the whole image)
+                        //server.log(format("Set offset to 0x%08X", offset));
+                        //server.log(format("From: %d, To: %d",from,to));
+                        // right now, we ignore offset changes and assume the full images will be contiguous!
                     }
                     continue;
                 } else {
-                    server.log("Skipped: " + line)
+                    //server.log("Skipped: " + line)
                     continue;
                 }
  
                 // Read the data from 8 to the end (less the last checksum byte)
-                bin_buffer.seek(addr)
                 for (local i = 8; i < (8 + (len * 2)); i += 2) {
                     local datum = hextoint(line.slice(i, i + 2));
                     bin_buffer.writen(datum, 'b')
@@ -103,13 +102,12 @@ function parse_hexfile(hex) {
         } while (from != null && to != null && from < to);
         
         // Resize the raw hex buffer so that it starts at the next line we need to parse
+        //server.log(format("Resizing Hex Buffer [%d to %d]",from,hex_buffer.len()));
         hex_buffer = hex_buffer.slice(from, hex_buffer.len());
         
-        // Crop, save and send the program 
-        //server.log(format("Max address: 0x%08x", maxaddress));
         bin_len += (bin_buffer.tell() - bin_len);
         bin_buffer.seek(bin_ptr);
-        server.log(format("Done parsing chunk, %d bytes in bin buffer",bin_len));
+        //server.log(format("Done parsing chunk, %d bytes in bin buffer",bin_len));
         
         //server.log("Free RAM: " + (imp.getmemoryfree()/1024) + " kb")
         return true;
@@ -133,18 +131,18 @@ function finish_dl() {
     bin_ptr = 0;
     bin_len = 0;
     bin_buffer = blob(2);
+    bytes_sent = 0;
 }
 
 function send_from_intelhex(dummy = 0) {
-    server.log(format("Preparing Binary: bin_ptr = %d, bin_len = %d, fw_ptr = %d, fw_len = %d",bin_ptr, bin_len, fw_ptr, fw_len));
     if (bin_len > BLOCKSIZE) {
         bin_buffer.seek(bin_ptr,'b');
         // we have more than a full chunk of raw binary data to send to the device, so send it.
-        server.log(format("bin_buffer len: %d",bin_buffer.len()));
         device.send("push", bin_buffer.readblob(BLOCKSIZE));
+        bytes_sent += BLOCKSIZE;
         // resize our local buffer of parsed data to contain only unsent data
         local parsed_bytes_left = bin_len - bin_buffer.tell();
-        server.log(format("Sent %d bytes, %d bytes remain in bin_buffer",bin_buffer.tell(),parsed_bytes_left));
+        //server.log(format("Sent %d bytes, %d bytes remain in bin_buffer",bin_buffer.tell(),parsed_bytes_left));
         // don't need to seek, as we've just read up to the end of the chunk we sent
         local swap = bin_buffer.readblob(parsed_bytes_left);
         bin_buffer.resize(parsed_bytes_left);
@@ -153,7 +151,7 @@ function send_from_intelhex(dummy = 0) {
         bin_buffer.seek(0,'b');
         bin_ptr = 0;
         bin_len = parsed_bytes_left;
-        server.log(format("FW Update: Parsed %d/%d bytes",fw_ptr,fw_len));
+        server.log(format("FW Update: Parsed %d/%d bytes, sent %d bytes",fw_ptr,fw_len,bytes_sent));
     } else {
         if (fw_ptr == fw_len) {
             if (bin_ptr == bin_len) {
@@ -163,14 +161,15 @@ function send_from_intelhex(dummy = 0) {
                 // there's nothing left to fetch on the server we're fetching from
                 // just send what we have
                 device.send("push", bin_buffer);
-                server.log(format("FW Update: Parsed %d/%d bytes",fw_ptr,fw_len));
+                bytes_sent += bin_buffer.len();
+                server.log(format("FW Update: Parsed %d/%d bytes, sent %d bytes (Final block)",fw_ptr,fw_len,bytes_sent));
                 bin_ptr = bin_len;
             }
         } else {
             // fetch more data from the remote server and parse it, then come back here to send it
             local bytes_left_remote = fw_len - fw_ptr;
             local buffersize = bytes_left_remote > BLOCKSIZE ? BLOCKSIZE : bytes_left_remote;
-            server.log(format("Fetching %d-%d",fw_ptr,fw_ptr + buffersize - 1));
+            //server.log(format("Fetching %d-%d",fw_ptr,fw_ptr + buffersize - 1));
             hex_buffer += http.get(fetch_url, { Range=format("bytes=%u-%u", fw_ptr, fw_ptr + buffersize - 1) }).sendsync().body;
             fw_ptr += buffersize;
             // this will parse the string right into bin_buffer
