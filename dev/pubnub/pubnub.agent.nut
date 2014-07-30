@@ -8,6 +8,7 @@ SECRETKEY <- split(http.agenturl(), "/").top();
 
 class PubNub {
     _pubNubBase = "https://pubsub.pubnub.com";
+    _presenceBase = "https://pubsub.pubnub.com/v2/presence";
     
     _publishKey = null;
     _subscribeKey = null;
@@ -137,23 +138,111 @@ class PubNub {
             
         }.bindenv(this));
     }
+    
+    function leave(channel) {
+        local url = format("%s/sub_key/%s/channel/%s/leave?uuid=%s",_presenceBase,_subscribeKey,channel,_uuid);
+        http.get(url).sendasync(function(resp) {
+            local err = null;
+            local data = null;
+            
+            if (resp.statuscode != 200) {
+                err = format("%i - %s", resp.statuscode, resp.body);
+                throw "Error Leaving Channel: "+err;
+            }
+        });
+    }
+    
+    function whereNow(callback) {
+        local url = format("%s/sub-key/%s/uuid/%s",_presenceBase,_subscribeKey,_uuid);
+        http.get(url).sendasync(function(resp) {
+            local err = null;
+            local data = null;
+        
+            if (resp.statuscode != 200) {
+                err = format("%i - %s", resp.statuscode, resp.body);
+                throw err;
+            } else {
+                try {        
+                    data = http.jsondecode(resp.body);
+                    if (!("channels" in data.payload)) {
+                        err = "Channel list not found: "+resp.body;
+                        throw err;
+                    } 
+                    data = data.payload.channels;
+                } catch (err) {
+                    callback(err,data);
+                }
+                callback(err,data);
+            }
+        });
+    }
+    
+    function hereNow(channel, callback) {
+        local url = format("%s/sub-key/%s/channel/%s",_presenceBase,_subscribeKey,channel);
+        http.get(url).sendasync(function(resp) {
+            //server.log(resp.body);
+            local data = null;
+            local err = null;
+            local result = {};
+        
+            if (resp.statuscode != 200) {
+                err = format("%i - %s", resp.statuscode, resp.body);
+                throw err;
+            } else {
+                try {        
+                    data = http.jsondecode(resp.body);
+                    if (!("uuids" in data)) {
+                        err = "UUID list not found: "+resp.body;
+                    } 
+                    if (!("occupancy" in data)) {
+                        err = "Occpancy not found"+resp.body;
+                    }
+                    result.uuids <- data.uuids;
+                    result.occupancy <- data.occupancy;
+                } catch (err) {
+                    callback(err,result);
+                }
+                callback(err,result);
+            }
+        });
+    }
+    
+    function globalHereNow(callback) {
+        local url = format("%s/sub-key/%s",_presenceBase,_subscribeKey);
+        http.get(url).sendasync(function(resp) {
+            //server.log(resp.body);
+            local err = null;
+            local data = null;
+            local result = {};
+        
+            if (resp.statuscode != 200) {
+                err = format("%i - %s", resp.statuscode, resp.body);
+                throw err;
+            } else {
+                try {        
+                    data = http.jsondecode(resp.body);
+                    if (!("channels" in data.payload)) {
+                        err = "Channel list not found: "+resp.body.payload;
+                    } 
+                    result = data.payload.channels;
+                } catch (err) {
+                    callback(err,result);
+                }
+                callback(err,result);
+            }
+        });
+    }
 }
 
 device.on("current", function(val) {
     pubNub.publish("temp_c",format("%0.2f",val));
 });
 
-function postdummy() {
-    imp.wakeup(10, postdummy);
-    pubNub.publish("demo","hi at "+time());
-}
-
 // publish key, subscribe key, secret key, [uuid]
 // if no uuid is provided, the agent's external unique ID is used
 pubNub <- PubNub(PUBKEY, SUBKEY, SECRETKEY);
 
 pubNub.subscribe(["temp_c", "demo"], function(err, data, tt) {
-    
     if (err != null) {
         server.log(err);
         return;
@@ -170,12 +259,34 @@ pubNub.subscribe(["temp_c", "demo"], function(err, data, tt) {
     server.log(logstr);
 });
 
-// pubNub.history("temp_c",50,function(err, data) {
+// pubNub.whereNow(function(err,channels) {
+//     if (err != null) {
+//         server.log(err);
+//     }
+//     server.log("Currently watching channels: "+http.jsonencode(channels));
+// });
+
+// pubNub.hereNow("temp_c",function(err,result) {
+//     if (err != null) {
+//         server.log(err);
+//     }
+//     server.log(result.occupancy + " Total UUIDs watching temp_c: "+http.jsonencode(result.uuids));
+// });
+
+// pubNub.globalHereNow(function(err,result) {
+//     if (err != null) {
+//         server.log(err);
+//     }
+//     server.log("Other Channels Using this Subscribe Key:");
+//     foreach (chname, channel in result) {
+//         server.log(chname + " (Occupancy: "+channel.occupancy+"): "+http.jsonencode(channel.uuids));
+//     }
+// });
+
+//pubNub.history("temp_c",50,function(err, data) {
 //     if (err != null) {
 //         server.error(err);
 //     } else {
 //         server.log("History: "+data);
 //     }
 // });
-
-postdummy();
