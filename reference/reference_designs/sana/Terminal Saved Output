@@ -1,0 +1,60 @@
+Last login: Wed Oct  8 16:02:08 on console
+13:39:14-tom$ pwd
+/Users/tom
+14:12:15-tom$ cd Desktop/
+14:12:17-tom$ curl --data-binary @sensekit.bin https://agent.electricimp.com/T2ptt6K1LGfL/program
+OK
+14:12:46-tom$ curl --data-binary @pwm.bin https://agent.electricimp.com/T2ptt6K1LGfL/program
+OK
+14:24:14-tom$ curl --data-binary @pwm.bin https://agent.electricimp.com/be8SAiST1aRh/program
+OK
+14:25:08-tom$ curl --data-binary @sensekit.bin https://agent.electricimp.com/be8SAiST1aRh/program
+OK
+14:25:43-tom$ curl --data-binary @pwm.bin https://agent.electricimp.com/be8SAiST1aRh/program
+
+OK
+15:10:05-tom$ 
+15:10:05-tom$ curl --data-binary @cycling.bin https://agent.electricimp.com/be8SAiST1aRh/program
+OK
+15:13:46-tom$ curl --data-binary @pwm.bin https://agent.electricimp.com/be8SAiST1aRh/program
+OK
+15:15:55-tom$ curl --data-binary @sensekit.bin https://agent.electricimp.com/be8SAiST1aRh/program
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
