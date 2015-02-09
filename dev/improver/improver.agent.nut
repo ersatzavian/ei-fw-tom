@@ -4,10 +4,10 @@
 // http://opensource.org/licenses/MIT
 
 // Twitter Keys
-const API_KEY = "";
-const API_SECRET = "";
-const AUTH_TOKEN = "";
-const TOKEN_SECRET = "";
+const API_KEY = "qeBrXETbRcD0V0Pu64Ti0xl7f";
+const API_SECRET = "vy408rqSe8YVHNxvWiq8owKpc5nxXQ67BlY6OGvQvUzKUEbsVT";
+const AUTH_TOKEN = "987794731-f63xQqJUITBQ3Cvxrd2Puc7czO7MstYoNirvO7BI";
+const TOKEN_SECRET = "qmookwgkENmy2TDhKOUME0ml77pbtNDWvxlvzHNspZUXT";
 
 class Twitter {
     // OAuth
@@ -75,7 +75,7 @@ class Twitter {
      *   onError - callback function that executes whenever there is an error
      **************************************************************************/
     function stream(searchTerms, onTweet, onError = null) {
-		server.log("Opening stream for: " + searchTerms);
+        server.log("Opening stream for: " + searchTerms);
         // Set default error handler
         if (onError == null) onError = _defaultErrorHandler.bindenv(this);
         
@@ -207,12 +207,16 @@ device.on("pos", function(data) {
     // server.log(data.ew +" "+ typeof(data.ew));
     // server.log(data.gs_knots +" "+ typeof(data.gs_knots));
     // server.log(data.true_course +" "+ typeof(data.true_course));
-    server.log(format("At %s UTC: (%s %s, %s %s), making %0.2f Knots at %0.2f True",
+    local update = format("At %s UTC: (%s %s, %s %s), making %0.2f Knots at %0.2f True",
         data.time,
         data.lat,
         data.ns,
         data.lon,
         data.ew,
         data.gs_knots,
-        data.true_course));
+        data.true_course)
+    server.log(update);
+    if ((data.gs_knots > 1.2) && (data.lat != "")) {
+        twitter.tweet(update);
+    }
 });
